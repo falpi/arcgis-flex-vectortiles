@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    VectorTileLayer demo: an Esri Map whose basemap is a vector tile basemap.
+
+    The proxy page is taken from the "proxyURL" FlashVar (see README, "Proxy e crossdomain").
+-->
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
+               xmlns:s="library://ns.adobe.com/flex/spark"
+               xmlns:esri="http://www.esri.com/2008/ags"
+               xmlns:falpi="http://falpi.org/ags"
+               preinitialize="init()">
+    <fx:Script>
+        <![CDATA[
+            import com.esri.ags.events.LayerEvent;
+
+            import mx.collections.ArrayList;
+            import mx.rpc.events.FaultEvent;
+
+            private static const ITEMS:String = "https://www.arcgis.com/sharing/rest/content/items/";
+
+            /** Basemaps of the selector: url of the base layer and, optionally, of a reference (labels) layer. */
+            [Bindable]
+            private var basemaps:ArrayList = new ArrayList([
+                {label: "Esri World Basemap (VectorTileServer)",
+                    url: "https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer"},
+                {label: "Esri World Topographic Map", url: ITEMS + "7dc6cea0b1764a1f9af2e679f642f0f5"},
+                {label: "Esri World Street Map", url: ITEMS + "de26a3cf4cc9451298ea173c4b324736"},
+                {label: "Esri World Navigation Map", url: ITEMS + "63c47b7177f946b49902c24129b87252"},
+                {label: "Esri World Street Map (Night)", url: ITEMS + "86f556a2d1fd468181855a35e344567f"},
+                {label: "Esri Light Gray Canvas", url: ITEMS + "291da5eab3a0412593b66d384379f89f",
+                    reference: ITEMS + "1768e8369a214dfab4e2167d5c5f2454"},
+                {label: "Esri Dark Gray Canvas", url: ITEMS + "5e9b3685f4c24d8781073dd928ebda50",
+                    reference: ITEMS + "747cb7a5329c478cbe6981076cc879c5"},
+                {label: "Esri OpenStreetMap", url: ITEMS + "3e1a00aeae81496587988075fe529f71"},
+                {label: "OpenFreeMap Liberty (MapLibre style)", url: "https://tiles.openfreemap.org/styles/liberty"}
+            ]);
+
+            [Bindable]
+            private var proxy:String;
+
+            [Bindable]
+            private var status:String = "";
+
+            private function init():void
+            {
+                proxy = parameters.proxyURL;
+            }
+
+            private function select(index:int):void
+            {
+                var basemap:Object = basemaps.getItemAt(index);
+                basemapLayer.url = basemap.url;
+                referenceLayer.url = basemap.reference;
+                referenceLayer.visible = basemap.reference != null;
+            }
+
+            private function layerUpdateStart(event:LayerEvent):void
+            {
+                status = "Drawing...";
+            }
+
+            private function layerUpdateEnd(event:LayerEvent):void
+            {
+                status = "Level " + map.level + ", scale 1:" + Math.round(map.scale);
+            }
+
+            private function layerFault(event:FaultEvent):void
+            {
+                status = "Error: " + event.fault.faultString;
+            }
+        ]]>
+    </fx:Script>
+
+    <s:layout>
+        <s:VerticalLayout gap="0"/>
+    </s:layout>
+
+    <s:HGroup width="100%" paddingLeft="6" paddingRight="6" paddingTop="6" paddingBottom="6" verticalAlign="middle" gap="10">
+        <s:DropDownList id="selector" width="300" dataProvider="{basemaps}" selectedIndex="0"
+                        change="select(selector.selectedIndex)"/>
+        <s:CheckBox id="labels" label="Labels" selected="true"/>
+        <s:Label text="{status}" width="100%"/>
+    </s:HGroup>
+
+    <esri:Map id="map" width="100%" height="100%" logoVisible="false">
+        <esri:extent>
+            <esri:Extent xmin="1386200" ymin="5142762" xmax="1395984" ymax="5150098">
+                <esri:SpatialReference wkid="102100"/>
+            </esri:Extent>
+        </esri:extent>
+
+        <!-- in place of <esri:ArcGISTiledMapServiceLayer url=".../World_Street_Map/MapServer"/> -->
+        <falpi:VectorTileLayer id="basemapLayer"
+                               url="https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer"
+                               proxyURL="{proxy}" labelsVisible="{labels.selected}"
+                               updateStart="layerUpdateStart(event)" updateEnd="layerUpdateEnd(event)"
+                               fault="layerFault(event)"/>
+
+        <!-- labels of the Canvas basemaps, published by Esri as a separate style -->
+        <falpi:VectorTileLayer id="referenceLayer" visible="false" proxyURL="{proxy}"
+                               labelsVisible="{labels.selected}" fault="layerFault(event)"
+                               updateEnd="layerUpdateEnd(event)"/>
+    </esri:Map>
+</s:Application>

@@ -1,0 +1,17 @@
+# Build output of Flash Builder (the SWC is published in the GitHub Releases)
+bin/
+bin-debug/
+bin-release/
+
+# ArcGIS API for Flex: Esri library, not redistributable here (see libs/README.md)
+libs/*.swc
+
+# Eclipse / Flash Builder workspace files
+.metadata/
+*.tmp
+*.bak
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MXML namespace http://falpi.org/ags: xmlns:falpi="http://falpi.org/ags" -->
+<componentPackage>
+    <component id="VectorTileLayer" class="org.falpi.ags.layers.VectorTileLayer"/>
+</componentPackage>
