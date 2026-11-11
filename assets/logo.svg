@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="t">
+  <title id="t">arcgis-flex-vectortiles</title>
+
+  <!-- three stacked vector tile layers -->
+  <path d="M128 120 L224 168 L128 216 L32 168 Z" fill="#0B2A4A" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M128 80 L224 128 L128 176 L32 128 Z" fill="#005E95" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M128 40 L224 88 L128 136 L32 88 Z" fill="#007AC2" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
+
+  <!-- tile boundaries on the top layer -->
+  <g stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="2" stroke-dasharray="5 5">
+    <line x1="176" y1="64" x2="80" y2="112"/>
+    <line x1="80" y1="64" x2="176" y2="112"/>
+  </g>
+
+  <!-- vector features -->
+  <path d="M150 78 L180 92 L166 106 L138 94 Z" fill="#3DDC97"/>
+  <path d="M58 90 L94 82 L122 104 L178 98" fill="none" stroke="#FFB02E" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Flex: bezier curve with its control handles -->
+  <line x1="70" y1="104" x2="92" y2="62" stroke="#FFFFFF" stroke-opacity="0.8" stroke-width="2"/>
+  <line x1="196" y1="84" x2="168" y2="122" stroke="#FFFFFF" stroke-opacity="0.8" stroke-width="2"/>
+  <path d="M70 104 C92 62 168 122 196 84" fill="none" stroke="#D7262E" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="92" cy="62" r="4" fill="#FFFFFF"/>
+  <circle cx="168" cy="122" r="4" fill="#FFFFFF"/>
+  <circle cx="70" cy="104" r="8" fill="#FFFFFF" stroke="#D7262E" stroke-width="4"/>
+  <circle cx="196" cy="84" r="8" fill="#FFFFFF" stroke="#D7262E" stroke-width="4"/>
+</svg>

@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo-wordmark.svg" alt="arcgis-flex-vectortiles" width="640"></p>
+
 # arcgis-flex-vectortiles
 
 An extension of the ArcGIS API for Flex 3.7: `org.falpi.ags.layers.VectorTileLayer`.
