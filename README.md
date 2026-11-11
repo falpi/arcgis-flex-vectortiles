@@ -1,142 +1,142 @@
 # arcgis-flex-vectortiles
 
-Estensione dell'ArcGIS API for Flex 3.7: `org.falpi.ags.layers.VectorTileLayer`.
+An extension of the ArcGIS API for Flex 3.7: `org.falpi.ags.layers.VectorTileLayer`.
 
-> Progetto indipendente, non affiliato né supportato da Esri. ArcGIS è un marchio di Esri.
+> Independent project, not affiliated with or endorsed by Esri. ArcGIS is a trademark of Esri.
 
 
-Layer per la `Map` dell'ArcGIS API for Flex 3.7 che disegna **basemap vettoriali**
-(tile Mapbox Vector Tile in PBF + stile Mapbox GL). Nasce per sostituire
-`ArcGISTiledMapServiceLayer` ora che le basemap raster di Esri vanno verso la dismissione.
+A layer for the `Map` of the ArcGIS API for Flex 3.7 that draws **vector basemaps**
+(Mapbox Vector Tiles in PBF + Mapbox GL style). It was built to replace
+`ArcGISTiledMapServiceLayer` now that Esri's raster basemaps are being phased out.
 
-La stessa classe accetta:
+The same class accepts:
 
-| Sorgente | Esempio di `url` |
+| Source | Example `url` |
 |---|---|
-| VectorTileServer Esri | `https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer` |
-| Item ArcGIS con stile (anche personalizzato) | `https://www.arcgis.com/sharing/rest/content/items/<id>` |
-| Stile Mapbox GL qualsiasi (MapLibre, MapTiler, OpenMapTiles, Mapbox…) | `https://tiles.openfreemap.org/styles/liberty`, `mapbox://styles/...` |
+| Esri VectorTileServer | `https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer` |
+| ArcGIS item with a style (custom styles too) | `https://www.arcgis.com/sharing/rest/content/items/<id>` |
+| Any Mapbox GL style (MapLibre, MapTiler, OpenMapTiles, Mapbox…) | `https://tiles.openfreemap.org/styles/liberty`, `mapbox://styles/...` |
 
-Il tipo di sorgente è riconosciuto dal contenuto della risposta, non serve indicarlo.
+The source type is detected from the content of the response; there is no need to specify it.
 
-## Uso
+## Usage
 
 ```xml
 <esri:Map>
-    <!-- prima: <esri:ArcGISTiledMapServiceLayer url=".../World_Street_Map/MapServer"/> -->
+    <!-- before: <esri:ArcGISTiledMapServiceLayer url=".../World_Street_Map/MapServer"/> -->
     <falpi:VectorTileLayer
         url="https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer"
         proxyURL="https://my-server/proxy/proxy.ashx"/>
 </esri:Map>
 ```
 
-con `xmlns:falpi="http://falpi.org/ags"` (oppure `xmlns:falpi="org.falpi.ags.layers.*"`).
-Da ActionScript: `import org.falpi.ags.layers.VectorTileLayer;` e `new VectorTileLayer(url, proxyURL, token)`.
+with `xmlns:falpi="http://falpi.org/ags"` (or `xmlns:falpi="org.falpi.ags.layers.*"`).
+From ActionScript: `import org.falpi.ags.layers.VectorTileLayer;` and `new VectorTileLayer(url, proxyURL, token)`.
 
-Basta aggiungere `bin/arcgis-flex-vectortiles.swc` alla library path dell'applicazione,
-che deve già linkare il Flex SDK 4.6 e lo SWC ArcGIS 3.7.
+Just add `bin/arcgis-flex-vectortiles.swc` to the library path of the application,
+which must already link the Flex SDK 4.6 and the ArcGIS 3.7 SWC.
 
-Esempio completo con selettore delle basemap: [examples/VectorTileDemo.mxml](examples/VectorTileDemo.mxml).
+Complete example with a basemap selector: [examples/VectorTileDemo.mxml](examples/VectorTileDemo.mxml).
 
-### Proprietà
+### Properties
 
-| Proprietà | Descrizione |
+| Property | Description |
 |---|---|
-| `url` | Servizio, item o stile (vedi sopra). Cambiarla a layer caricato ricarica la basemap. |
-| `proxyURL` | Pagina proxy; le richieste diventano `proxyURL?URL`, come per gli altri layer Esri. **Nel browser è necessaria**, vedi sotto. |
-| `token` | Token ArcGIS o API key, aggiunto a tutte le richieste. |
-| `tokenParameter` | Nome del parametro del token: `token` (default), `access_token` (Mapbox), `key` (MapTiler). |
-| `style` | Stile Mapbox GL (Object o stringa JSON) che sostituisce quello pubblicato all'URL. |
-| `tilingScheme` | `arcgis` (default): la `Map` riceve i 24 livelli delle basemap raster classiche, quindi `map.level` e le scale restano quelli di prima. `service`: livelli del servizio vettoriale (tile 512 px, un livello in meno a parità di scala). |
-| `labelsVisible` | Mostra o nasconde etichette e icone. |
-| `maxConnections` | Richieste HTTP in parallelo (default 6). |
-| `styleDefinition` | Lo stile analizzato, in sola lettura. |
+| `url` | Service, item or style (see above). Changing it after the layer has loaded reloads the basemap. |
+| `proxyURL` | Proxy page; requests become `proxyURL?URL`, as for the other Esri layers. **Required in the browser**, see below. |
+| `token` | ArcGIS token or API key, appended to every request. |
+| `tokenParameter` | Name of the token parameter: `token` (default), `access_token` (Mapbox), `key` (MapTiler). |
+| `style` | Mapbox GL style (Object or JSON string) that replaces the one published at the URL. |
+| `tilingScheme` | `arcgis` (default): the `Map` gets the 24 levels of the classic raster basemaps, so `map.level` and the scales stay the same as before. `service`: levels of the vector service (512 px tiles, one level fewer at the same scale). |
+| `labelsVisible` | Shows or hides labels and icons. |
+| `maxConnections` | Parallel HTTP requests (default 6). |
+| `styleDefinition` | The parsed style, read-only. |
 
-Ereditate da `TiledMapServiceLayer`/`Layer`: `tileInfo`, `fullExtent`, `initialExtent`,
-`spatialReference`, `copyright` (preso dal servizio), `visible`, `alpha`, `minScale`, `maxScale`…
+Inherited from `TiledMapServiceLayer`/`Layer`: `tileInfo`, `fullExtent`, `initialExtent`,
+`spatialReference`, `copyright` (taken from the service), `visible`, `alpha`, `minScale`, `maxScale`…
 
-### Eventi
+### Events
 
-`load`, `loadError`, `updateStart`, `updateEnd` (emesso quando anche le etichette sono
-disegnate), `isInScaleRangeChange`, più `fault` (`FaultEvent`) se servizio o stile non si caricano.
+`load`, `loadError`, `updateStart`, `updateEnd` (dispatched once the labels are drawn too),
+`isInScaleRangeChange`, plus `fault` (`FaultEvent`) if the service or the style cannot be loaded.
 
-## Proxy e crossdomain
+## Proxy and crossdomain
 
-Il Flash Player legge dati binari da un altro dominio solo se quel dominio pubblica un
-`crossdomain.xml`. I server delle basemap vettoriali Esri non lo pubblicano
-(`basemaps.arcgis.com`, `www.arcgis.com`, `cdn.arcgis.com`), quindi in produzione serve un proxy
-sullo stesso server dell'applicazione Flex, per esempio il
-[resource-proxy di Esri](https://github.com/Esri/resource-proxy). Il proxy deve:
+Flash Player reads binary data from another domain only if that domain publishes a
+`crossdomain.xml`. Esri's vector basemap servers do not publish one
+(`basemaps.arcgis.com`, `www.arcgis.com`, `cdn.arcgis.com`), so in production you need a proxy
+on the same server as the Flex application, for example Esri's
+[resource-proxy](https://github.com/Esri/resource-proxy). The proxy must:
 
-- ammettere almeno `basemaps.arcgis.com`, `www.arcgis.com` e `cdn.arcgis.com`
-  (oltre agli host di eventuali stili non Esri);
-- restituire i dati binari senza alterarli (le tile possono arrivare compresse gzip: il layer le decomprime).
+- allow at least `basemaps.arcgis.com`, `www.arcgis.com` and `cdn.arcgis.com`
+  (plus the hosts of any non-Esri styles);
+- return binary data unaltered (tiles may arrive gzip-compressed: the layer decompresses them).
 
-La policy deve arrivare direttamente dall'URL richiesto: Flash ignora un `crossdomain.xml`
-ottenuto tramite redirect verso un altro schema o host, anche se il contenuto è corretto.
-In quel caso il layer riceve `#2048 Security sandbox violation` e va usato il proxy.
-Le tile delle basemap raster non hanno questo vincolo perché sono immagini: Flash le mostra
-anche senza policy, mentre i dati (stile, metadati, tile PBF, glyph, sprite) vanno letti.
+The policy must come directly from the requested URL: Flash ignores a `crossdomain.xml`
+reached through a redirect to another scheme or host, even if its content is correct.
+In that case the layer gets `#2048 Security sandbox violation` and the proxy must be used.
+Raster basemap tiles are not subject to this constraint because they are images: Flash displays
+them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sprites) must be read.
 
-## Copertura dello stile
+## Style coverage
 
-| Elemento | Stato |
+| Element | Status |
 |---|---|
-| `background`, `fill`, `line`, `circle` | Supportati: colori, opacità, `fill-pattern`, `line-dasharray`, cap/join, `*-translate` |
-| `symbol` | Etichette (glyph SDF con alone), testo lungo le linee, a capo, ancoraggi, offset, `text-transform`, icone da sprite, rotazioni, collisioni con priorità per ordine di stile |
-| Filtri | Sintassi legacy ed espressioni |
-| Funzioni | `stops` legacy (zoom, proprietà, zoom+proprietà) ed espressioni (`match`, `case`, `interpolate`, `step`, `coalesce`, `let`/`var`, matematica, stringhe, colori…) |
-| `fill-extrusion` | Disegnata piatta (impronta) |
-| `line-gap-width` | Approssimata con una linea singola |
-| `raster`, `hillshade`, `heatmap`, terreno, cielo | Ignorati |
-| `icon-text-fit`, `text-variable-anchor`, `symbol-sort-key` | Non implementati |
-| Scritture complesse (arabo, indiane, bidi) | Non supportate (latino, greco, cirillico, CJK sì) |
+| `background`, `fill`, `line`, `circle` | Supported: colors, opacity, `fill-pattern`, `line-dasharray`, cap/join, `*-translate` |
+| `symbol` | Labels (SDF glyphs with halo), text along lines, line wrapping, anchors, offsets, `text-transform`, sprite icons, rotation, collisions with priority by style order |
+| Filters | Legacy syntax and expressions |
+| Functions | Legacy `stops` (zoom, property, zoom+property) and expressions (`match`, `case`, `interpolate`, `step`, `coalesce`, `let`/`var`, math, strings, colors…) |
+| `fill-extrusion` | Drawn flat (footprint) |
+| `line-gap-width` | Approximated with a single line |
+| `raster`, `hillshade`, `heatmap`, terrain, sky | Ignored |
+| `icon-text-fit`, `text-variable-anchor`, `symbol-sort-key` | Not implemented |
+| Complex scripts (Arabic, Indic, bidi) | Not supported (Latin, Greek, Cyrillic, CJK are) |
 
-## Limiti noti e cose non verificate
+## Known limitations and untested areas
 
-- **Proiezione**: provato solo Web Mercator (102100/3857). Il codice per i servizi Esri con
-  altra proiezione (livelli presi dal `tileInfo` del servizio) non è stato provato.
-- **`wrapAround180`** non è supportato (niente ripetizione del mondo oltre l'antimeridiano).
-- **Rotazione della mappa** (`mapRotation`) non provata.
-- Le etichette vengono ricalcolate a fine pan/zoom, non durante il movimento.
-- Rendering su CPU: 20–100 ms per tile, distribuiti su più frame.
-- Esri **Basemap Styles service v2** (`basemapstyles-api.arcgis.com`, con API key) non provato;
-  provati il VectorTileServer `World_Basemap_v2` e gli item pubblici Esri (Street, Navigation,
-  Street Night, Light/Dark Gray Canvas con i relativi layer di riferimento).
-- Le basemap "Canvas" di Esri hanno le etichette in un item separato ("Reference"): si aggiunge
-  come secondo `VectorTileLayer` sopra la base (vedi l'esempio).
+- **Projection**: only Web Mercator (102100/3857) has been tested. The code for Esri services in
+  other projections (levels taken from the service `tileInfo`) has not been tested.
+- **`wrapAround180`** is not supported (the world is not repeated across the antimeridian).
+- **Map rotation** (`mapRotation`) has not been tested.
+- Labels are recomputed at the end of a pan/zoom, not during the movement.
+- CPU rendering: 20–100 ms per tile, spread over several frames.
+- Esri **Basemap Styles service v2** (`basemapstyles-api.arcgis.com`, with API key) has not been tested;
+  tested: the `World_Basemap_v2` VectorTileServer and Esri's public items (Street, Navigation,
+  Street Night, Light/Dark Gray Canvas with their reference layers).
+- Esri's "Canvas" basemaps have their labels in a separate item ("Reference"): add it
+  as a second `VectorTileLayer` above the base (see the example).
 
-## Struttura
+## Layout
 
 ```
 src/org/falpi/ags/layers/
-  VectorTileLayer.as             il componente (integrazione con Map, tile, frame, etichette)
+  VectorTileLayer.as             the component (Map integration, tiles, frames, labels)
 src/org/falpi/ags/layers/vectorTiles/
-  source/                        risoluzione di servizio / item / stile / TileJSON
-  style/                         stile Mapbox GL: layer, proprietà, filtri, espressioni, colori
-  mvt/, pbf/                     decoder Protocol Buffers e Mapbox Vector Tile
-  render/                        renderer CPU delle tile e sprite
-  labels/                        glyph SDF, impaginazione testo, collisioni, posizionamento
-  net/, util/                    caricamento con proxy/token/gzip, URL
-examples/                        applicazione di esempio
-src/manifest.xml                 namespace MXML http://falpi.org/ags
-libs/agslib-3.7-2014-11-06.swc   ArcGIS API for Flex (linkata esternamente)
+  source/                        service / item / style / TileJSON resolution
+  style/                         Mapbox GL style: layers, properties, filters, expressions, colors
+  mvt/, pbf/                     Protocol Buffers and Mapbox Vector Tile decoders
+  render/                        CPU tile renderer and sprites
+  labels/                        SDF glyphs, text shaping, collisions, placement
+  net/, util/                    loading with proxy/token/gzip, URLs
+examples/                        example application
+src/manifest.xml                 MXML namespace http://falpi.org/ags
+libs/agslib-3.7-2014-11-06.swc   ArcGIS API for Flex (linked externally)
 ```
 
 ## Build
 
-**Flash Builder 4.7**: *File > Import > General > Existing Projects into Workspace* e scegliere
-questa cartella. È un progetto libreria Flex (SDK 4.6) che produce `bin/arcgis-flex-vectortiles.swc`;
-framework Flex e `libs/agslib-3.7-2014-11-06.swc` sono linkati esternamente.
-Lo SWC dell'ArcGIS API for Flex non è nel repository: va copiato in `libs/` (vedi [libs/README.md](libs/README.md)).
-Lo SWC compilato di questa estensione è disponibile nelle Release del repository.
+**Flash Builder 4.7**: *File > Import > General > Existing Projects into Workspace* and select
+this folder. It is a Flex library project (SDK 4.6) that produces `bin/arcgis-flex-vectortiles.swc`;
+the Flex framework and `libs/agslib-3.7-2014-11-06.swc` are linked externally.
+The ArcGIS API for Flex SWC is not in the repository: copy it into `libs/` (see [libs/README.md](libs/README.md)).
+The compiled SWC of this extension is available in the repository Releases.
 
-L'esempio `examples/VectorTileDemo.mxml` si compila in un progetto applicazione Flex che linka
-lo SWC (o i sorgenti di `src/`) e lo SWC ArcGIS; la pagina proxy si passa con il FlashVar `proxyURL`.
+The example `examples/VectorTileDemo.mxml` is compiled in a Flex application project that links
+the SWC (or the sources in `src/`) and the ArcGIS SWC; the proxy page is passed with the `proxyURL` FlashVar.
 
-## Licenza
+## License
 
-Distribuito con licenza [Apache 2.0](LICENSE). Copyright 2026 falpi.
+Distributed under the [Apache 2.0](LICENSE) license. Copyright 2026 falpi.
 
-L'ArcGIS API for Flex, necessaria per compilare e usare il layer, è di Esri e ha una licenza propria:
-non è inclusa né coperta da questa licenza.
+The ArcGIS API for Flex, required to compile and use the layer, belongs to Esri and has its own license:
+it is neither included in nor covered by this license.
