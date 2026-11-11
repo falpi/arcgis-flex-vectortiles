@@ -133,3 +133,10 @@ Lo SWC compilato di questa estensione è disponibile nelle Release del repositor
 
 L'esempio `examples/VectorTileDemo.mxml` si compila in un progetto applicazione Flex che linka
 lo SWC (o i sorgenti di `src/`) e lo SWC ArcGIS; la pagina proxy si passa con il FlashVar `proxyURL`.
+
+## Licenza
+
+Distribuito con licenza [Apache 2.0](LICENSE). Copyright 2026 falpi.
+
+L'ArcGIS API for Flex, necessaria per compilare e usare il layer, è di Esri e ha una licenza propria:
+non è inclusa né coperta da questa licenza.
