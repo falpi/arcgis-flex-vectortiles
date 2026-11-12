@@ -211,6 +211,11 @@ package org.falpi.ags.layers.vectorTiles.gpu
         /** Diagnostics: errors met while building meshes (count and last message). */
         public var errors:int = 0;
         public var lastError:String = "";
+        /** Diagnostics: time spent building meshes (of which uploading buffers) and meshes built. */
+        public var buildMs:int = 0;
+        public var uploadMs:int = 0;
+        public var meshesBuilt:int = 0;
+        public var verticesBuilt:Number = 0;
         public var framesDrawn:int = 0;
         public var framesSkipped:int = 0;
 
@@ -224,7 +229,9 @@ package org.falpi.ags.layers.vectorTiles.gpu
         /** Diagnostics: meshes and GPU memory in use. */
         public function get stats():String
         {
-            return m_meshCount + " meshes, " + (m_bytes / 1048576).toFixed(1) + " MB, " + m_buffers + " buffers, frames " +
+            return m_meshCount + " meshes, " + (m_bytes / 1048576).toFixed(1) + " MB, " + m_buffers + " buffers, built " +
+                   meshesBuilt + " (" + Math.round(verticesBuilt / 1000) + "k vertices) in " + buildMs + " ms (upload " +
+                   uploadMs + " ms), frames " +
                    framesDrawn + " drawn/" + framesSkipped + " skipped, slowest feature " + slowestFeatureMs + " ms (" +
                    slowestFeature + "), errors " + errors + (errors > 0 ? " (" + lastError + ")" : "");
         }
@@ -840,6 +847,7 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 m_count = 0;
             }
             var items:Array = mesh.items;
+            var stepStart:int = getTimer();
             try
             {
                 while (mesh.itemIndex < items.length)
@@ -885,6 +893,7 @@ package org.falpi.ags.layers.vectorTiles.gpu
                         }
                         if (now >= deadline)
                         {
+                            buildMs += now - stepStart;
                             return;
                         }
                     }
@@ -900,10 +909,12 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 failMesh(mesh);
                 return;
             }
+            buildMs += getTimer() - stepStart;
             if (!mesh.failed)
             {
                 mesh.ready = true;
                 mesh.items = null;
+                meshesBuilt++;
             }
             m_building = null;
         }
@@ -956,10 +967,13 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 var ib:IndexBuffer3D = null;
                 try
                 {
+                    var uploadStart:int = getTimer();
                     vb = m_context.createVertexBuffer(count, FLOATS);
                     vb.uploadFromVector(m_v, 0, count);
                     ib = m_context.createIndexBuffer(indices);
                     ib.uploadFromVector(m_i, 0, indices);
+                    uploadMs += getTimer() - uploadStart;
+                    verticesBuilt += count;
                     chunk = new GpuChunk();
                     chunk.vertices = vb;
                     chunk.indices = ib;

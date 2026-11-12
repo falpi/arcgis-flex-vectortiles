@@ -34,6 +34,10 @@ package org.falpi.ags.layers
     import flash.geom.Point;
     import flash.geom.Rectangle;
     import flash.net.URLRequest;
+    import flash.system.Capabilities;
+    import flash.text.TextField;
+    import flash.text.TextFieldAutoSize;
+    import flash.text.TextFormat;
     import flash.utils.ByteArray;
     import flash.utils.Dictionary;
     import flash.utils.getTimer;
@@ -183,6 +187,16 @@ package org.falpi.ags.layers
         /** tile bitmap -> tile entry, to find the GPU fills of the bitmaps in display order. */
         private var m_bitmapTiles:Dictionary = new Dictionary(true);
         private var m_meshQueue:Array = [];
+        private var m_moveTime:int = -10000;
+        private var m_statStart:int;
+        private var m_statTiles:int;
+        private var m_statPlaceCount:int;
+        private var m_statPlaceMs:int;
+        private var m_statRenderMs:int;
+        private var m_statRenderCount:int;
+
+        /** Diagnostics: where the time of the last completed update went. */
+        public var updateTimings:String = "";
         private var m_gpuEntries:Array = [];
         private var m_boosted:Boolean = false;
         private var m_boostTime:int = 0;
@@ -375,6 +389,98 @@ package org.falpi.ags.layers
          * 0 leaves the frame rate of the application alone.
          */
         public var interactiveFrameRate:int = 60;
+
+        private var m_diagnostics:Boolean = false;
+        private var m_diagnosticsText:TextField;
+        private var m_diagnosticsFrames:int = 0;
+        private var m_diagnosticsTime:int = 0;
+        private var m_diagnosticsWorst:int = 0;
+        private var m_diagnosticsLast:int = 0;
+
+        /**
+         * Shows a box at the top left of the map with the player, the real frame rate, the GPU state and
+         * where the time of the last update went (to report performance problems).
+         */
+        public function get diagnostics():Boolean
+        {
+            return m_diagnostics;
+        }
+
+        public function set diagnostics(value:Boolean):void
+        {
+            if (m_diagnostics == value)
+            {
+                return;
+            }
+            m_diagnostics = value;
+            if (value)
+            {
+                addEventListener(Event.ENTER_FRAME, diagnosticsFrame);
+            }
+            else
+            {
+                removeEventListener(Event.ENTER_FRAME, diagnosticsFrame);
+                if (m_diagnosticsText != null && m_diagnosticsText.parent != null)
+                {
+                    m_diagnosticsText.parent.removeChild(m_diagnosticsText);
+                }
+                m_diagnosticsText = null;
+            }
+        }
+
+        private function diagnosticsFrame(event:Event):void
+        {
+            var now:int = getTimer();
+            if (m_diagnosticsLast > 0 && now - m_diagnosticsLast > m_diagnosticsWorst)
+            {
+                m_diagnosticsWorst = now - m_diagnosticsLast;
+            }
+            m_diagnosticsLast = now;
+            m_diagnosticsFrames++;
+            if (stage == null || map == null || now - m_diagnosticsTime < 1000)
+            {
+                return;
+            }
+            if (m_diagnosticsText == null)
+            {
+                m_diagnosticsText = new TextField();
+                m_diagnosticsText.autoSize = TextFieldAutoSize.LEFT;
+                m_diagnosticsText.background = true;
+                m_diagnosticsText.backgroundColor = 0xFFFFE0;
+                m_diagnosticsText.border = true;
+                m_diagnosticsText.selectable = true;
+                m_diagnosticsText.defaultTextFormat = new TextFormat("_sans", 11, 0x000000);
+                stage.addChild(m_diagnosticsText);
+            }
+            var fps:Number = m_diagnosticsFrames * 1000 / (now - m_diagnosticsTime);
+            var loading:int = 0;
+            var total:int = 0;
+            for each (var tile:Object in m_tiles)
+            {
+                total++;
+                if (tile.needed && tile.state != DONE)
+                {
+                    loading++;
+                }
+            }
+            m_point.x = 0;
+            m_point.y = 0;
+            var topLeft:Point = map.localToGlobal(m_point);
+            m_diagnosticsText.x = topLeft.x + 60;
+            m_diagnosticsText.y = topLeft.y + 8;
+            m_diagnosticsText.visible = visible && isOnScreen();
+            m_diagnosticsText.text = "VectorTileLayer " + id + " | " + Capabilities.playerType + " " + Capabilities.version +
+                (Capabilities.isDebugger ? " debugger" : "") + "\n" +
+                "fps " + fps.toFixed(0) + " (stage " + stage.frameRate + "), worst frame " + m_diagnosticsWorst + " ms | level " +
+                map.level + ", tiles " + total + " (" + loading + " loading), queues " + m_renderQueue.length + "/" +
+                m_meshQueue.length + "\n" +
+                "render " + m_renderMode + (gpuActive ? " active" : " not active") + ": " + m_gpuStatus + "\n" +
+                (m_gpu != null ? m_gpu.stats + "\n" : "") +
+                "last update: " + updateTimings;
+            m_diagnosticsFrames = 0;
+            m_diagnosticsTime = now;
+            m_diagnosticsWorst = 0;
+        }
 
         /** Meshes, GPU memory and frames drawn by the GPU renderer (diagnostics). */
         public function get gpuStats():String
@@ -677,6 +783,7 @@ package org.falpi.ags.layers
 
         override protected function zoomUpdateHandler(event:ZoomEvent):void
         {
+            m_moveTime = getTimer();
             boostFrameRate();
             var scrollRect:Rectangle = viewportScrollRect();
             var width:Number = Number(internalValue(event, "width"));
@@ -705,6 +812,12 @@ package org.falpi.ags.layers
                 return;
             }
             m_updatePending = true;
+            m_statStart = getTimer();
+            m_statTiles = -1;
+            m_statPlaceCount = 0;
+            m_statPlaceMs = 0;
+            m_statRenderMs = 0;
+            m_statRenderCount = 0;
             m_content.x = 0;
             m_content.y = 0;
             m_content.scaleX = 1;
@@ -760,6 +873,7 @@ package org.falpi.ags.layers
 
         private function panUpdate(event:PanEvent):void
         {
+            m_moveTime = getTimer();
             boostFrameRate();
             if (m_definition == null || !m_hasView || !visible)
             {
@@ -1125,8 +1239,11 @@ package org.falpi.ags.layers
                 return;
             }
             var start:int = getTimer();
-            // at most about half of the frame interval, so that pan and zoom stay smooth
-            var budget:int = stage != null ? Math.min(FRAME_BUDGET_MS, Math.max(4, 450 / stage.frameRate)) : FRAME_BUDGET_MS;
+            // while the user moves the map: under half of the frame interval, to keep pan and zoom smooth;
+            // otherwise most of it, to finish sooner (the frame rate drops a little only while loading)
+            var interval:Number = stage != null ? 1000 / stage.frameRate : 40;
+            var moving:Boolean = start - m_moveTime < 600;
+            var budget:int = moving ? Math.max(4, interval * 0.45) : Math.max(FRAME_BUDGET_MS, Math.min(40, interval * 0.8));
             var deadline:int = start + budget;
             var rendered:Boolean = false;
             var tile:Object;
@@ -1173,7 +1290,7 @@ package org.falpi.ags.layers
             else if (m_labelsDirty && m_renderQueue.length == 0 && m_meshQueue.length == 0)
             {
                 // wait for a quiet moment: placing labels while tiles keep arriving would be wasted work
-                if (!hasLoadingTiles() || getTimer() - m_labelsTime > 700)
+                if (!hasLoadingTiles() || getTimer() - m_labelsTime > 1500)
                 {
                     placeLabels();
                 }
@@ -1225,6 +1342,7 @@ package org.falpi.ags.layers
             var data:BitmapData = new BitmapData(size, size, true, 0);
             var symbols:Vector.<SymbolCandidate> = new Vector.<SymbolCandidate>();
             var gpuFills:Array = gpuActive ? [] : null;
+            var renderStart:int = getTimer();
             try
             {
                 m_renderer.render(data, size, tile.zoom, tile.sources, tile.x * size, tile.y * size, symbols, true, gpuFills);
@@ -1233,6 +1351,8 @@ package org.falpi.ags.layers
             {
                 // a broken tile must not stop the others
             }
+            m_statRenderMs += getTimer() - renderStart;
+            m_statRenderCount++;
             tile.symbols = symbols;
             var bitmap:Bitmap = new Bitmap(data);
             if (gpuFills != null && m_renderer.drawCalls == 0)
@@ -1282,6 +1402,10 @@ package org.falpi.ags.layers
             {
                 return;
             }
+            if (m_statTiles < 0)
+            {
+                m_statTiles = getTimer() - m_statStart;
+            }
             for each (var tile:Object in m_tiles)
             {
                 if (!tile.needed)
@@ -1299,6 +1423,9 @@ package org.falpi.ags.layers
         {
             if (m_updatePending)
             {
+                updateTimings = "tiles " + m_statTiles + " ms (cpu " + m_statRenderMs + " ms in " + m_statRenderCount +
+                    " tiles), labels placed " + m_statPlaceCount + "x in " + m_statPlaceMs + " ms, total " +
+                    (getTimer() - m_statStart) + " ms";
                 m_updatePending = false;
                 dispatchEvent(new LayerEvent(LayerEvent.UPDATE_END, this, null, true));
             }
@@ -1579,6 +1706,7 @@ package org.falpi.ags.layers
                 }
             }
             var overlay:BitmapData = new BitmapData(width, height, true, 0);
+            var placeStart:int = getTimer();
             try
             {
                 m_placer.place(overlay, m_zoom, list);
@@ -1586,6 +1714,8 @@ package org.falpi.ags.layers
             catch (error:Error)
             {
             }
+            m_statPlaceCount++;
+            m_statPlaceMs += getTimer() - placeStart;
             var previous:BitmapData = m_labelBitmap.bitmapData;
             m_labelBitmap.bitmapData = overlay;
             m_labelBitmap.x = originX;
