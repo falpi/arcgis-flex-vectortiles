@@ -49,8 +49,9 @@ package org.falpi.ags.layers.vectorTiles.render
          * @param tiles source name -> SourceTile
          * @param worldX, worldY pixel position of the tile in the world (keeps patterns continuous)
          * @param symbols receives the symbol candidates of the tile (may be null)
-         * @param gpuFills when not null, fill layers and the background are not drawn: the fill buckets
-         *        are appended to it as {bucket, source} in drawing order, for the GPU renderer
+         * @param gpuFills when not null, the background, fill and line layers are not drawn here: they are
+         *        appended to it as {bucket, source, kind} in drawing order for the GPU renderer, kind being
+         *        "fill", "outline" (fill-outline-color of a fill bucket) or "line"
          */
         public function render(target:BitmapData, size:Number, zoom:Number, tiles:Object, worldX:Number, worldY:Number,
                                symbols:Vector.<SymbolCandidate>, drawBackground:Boolean = true,
@@ -105,11 +106,23 @@ package org.falpi.ags.layers.vectorTiles.render
                         }
                         else if (!fillBucket.empty)
                         {
-                            gpuFills.push({bucket: fillBucket, source: source});
+                            gpuFills.push({bucket: fillBucket, source: source, kind: "fill"});
+                            if (hasOutline(fillBucket))
+                            {
+                                gpuFills.push({bucket: fillBucket, source: source, kind: "outline"});
+                            }
                         }
                         break;
                     case "line":
-                        drawLineLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy, clip);
+                        var lineBucket:LayerBucket = BucketBuilder.bucket(layer, data, zoom, sprites);
+                        if (gpuFills == null)
+                        {
+                            drawLineLayer(lineBucket, k, ox, oy, clip);
+                        }
+                        else if (!lineBucket.empty && lineBucket.features.length > 0)
+                        {
+                            gpuFills.push({bucket: lineBucket, source: source, kind: "line"});
+                        }
                         break;
                     case "circle":
                         drawCircleLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy);
@@ -271,6 +284,27 @@ package org.falpi.ags.layers.vectorTiles.render
             {
                 flush(b.groupAlpha);
             }
+        }
+
+        /** A fill bucket draws an outline: fill-outline-color, or the hairline smoothing opaque fills. */
+        private static function hasOutline(b:LayerBucket):Boolean
+        {
+            if (b.antialias)
+            {
+                return true;
+            }
+            if (!b.perFeature)
+            {
+                return b.outlineColor != null && b.outlineColor.a > 0;
+            }
+            for each (var outline:StyleColor in b.outlineColors)
+            {
+                if (outline != null && outline.a > 0)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private function patternOf(layer:StyleLayer, property:String, feature:MvtFeature):BitmapData

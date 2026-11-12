@@ -7,13 +7,15 @@ package org.falpi.ags.layers.vectorTiles.gpu
      * Minimal AGAL (version 1) assembler for the few shaders of the GPU renderer.
      * One instruction per line: "opcode dest, source1[, source2]", for example
      * "mul vt0.xy, va0.xy, vc0.xy". Registers: va (attribute), vc/fc (constant), vt/ft (temporary),
-     * op/oc (output), v (varying). Opcodes: mov, add, sub, mul, div, min, max, m44.
+     * op/oc (output), v (varying). Opcodes: mov, add, sub, mul, div, rcp, min, max, frc, abs, neg,
+     * sat, m44, and
+     * "kil source" (discards the fragment when the source component is negative).
      * No samplers, no indirect addressing (not needed so far).
      */
     public final class Agal
     {
         private static const OPCODES:Object = {mov: 0x00, add: 0x01, sub: 0x02, mul: 0x03, div: 0x04,
-            min: 0x0a, max: 0x0b, m44: 0x18};
+            rcp: 0x05, min: 0x06, max: 0x07, frc: 0x08, abs: 0x14, neg: 0x15, sat: 0x16, m44: 0x18, kil: 0x27};
         private static const TYPES:Object = {va: 0, vc: 1, fc: 1, vt: 2, ft: 2, op: 3, oc: 3, v: 4};
         private static const COMPONENTS:String = "xyzw";
 
@@ -40,6 +42,14 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 }
                 var operands:Array = line.substr(space + 1).split(",");
                 b.writeUnsignedInt(OPCODES[name]);
+                if (name == "kil")
+                {
+                    // no destination: the operand is the first source
+                    b.writeUnsignedInt(0);
+                    writeSource(b, trim(operands[0]));
+                    writeSource(b, null);
+                    continue;
+                }
                 writeDestination(b, trim(operands[0]));
                 writeSource(b, operands.length > 1 ? trim(operands[1]) : null);
                 writeSource(b, operands.length > 2 ? trim(operands[2]) : null);
