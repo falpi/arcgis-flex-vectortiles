@@ -4,7 +4,12 @@ package org.falpi.ags.layers
     import com.esri.ags.geometry.Extent;
     import com.esri.ags.layers.WebTiledLayer;
 
+    import flash.display.BitmapData;
     import flash.display.DisplayObject;
+    import flash.utils.getQualifiedClassName;
+
+    import mx.core.UIComponent;
+    import mx.core.mx_internal;
     import flash.display.Stage3D;
     import flash.display3D.Context3D;
     import flash.display3D.Context3DBlendFactor;
@@ -271,8 +276,13 @@ package org.falpi.ags.layers
                 status(m_error != null ? m_error : "waiting for Context3D...");
                 return;
             }
+            if (now - m_coverTime > 2000)
+            {
+                m_coverTime = now;
+                m_cover = coverReport(new Point(topLeft.x + width / 2, topLeft.y + height / 2));
+            }
             status("Stage3D " + m_context.driverInfo + " | " + width + "x" + height + " | " + m_fps.toFixed(0) + " fps" +
-                   (m_error != null ? "\n" + m_error : ""));
+                   (m_error != null ? "\n" + m_error : "") + (m_cover != null ? "\n" + m_cover : ""));
             // Stage3D is not part of the display list: hide it ourselves when the layer is not on screen
             // (basemap switched off, map in another tab...), otherwise the last frame stays under the UI
             var onScreen:Boolean = width >= 50 && height >= 50 && isOnScreen();
@@ -446,6 +456,96 @@ package org.falpi.ags.layers
             vertex(x0, y1);
             triangle(first, first + 1, first + 2);
             triangle(first, first + 2, first + 3);
+        }
+
+        private var m_coverTime:int;
+        private var m_cover:String;
+
+        /**
+         * Diagnostic: what in the display list covers Stage3D at the given stage point.
+         * Hides the map, then its ancestors one by one (flash-level visibility, no Flex events, restored at once),
+         * and reports the alpha of the display list at that point after each step: the first ancestor after
+         * which the alpha drops to 0 is the outermost one that paints an opaque background under the map.
+         */
+        private function coverReport(p:Point):String
+        {
+            var chain:Array = [];
+            for (var d:DisplayObject = map; d != null && d != stage; d = d.parent)
+            {
+                chain.push(d);
+            }
+            var hidden:Array = [];
+            var lines:Array = [];
+            try
+            {
+                for (var i:int = 0; i < chain.length; i++)
+                {
+                    var o:DisplayObject = chain[i];
+                    setFlashVisible(o, false);
+                    hidden.push(o);
+                    var a:int = alphaAt(p);
+                    lines.push((i == 0 ? "map hidden" : describe(o)) + " -> alpha " + a);
+                    if (a == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+            catch (error:Error)
+            {
+                lines.push("cover check: " + error.message);
+            }
+            for each (o in hidden)
+            {
+                setFlashVisible(o, true);
+            }
+            return lines.join("\n");
+        }
+
+        private function alphaAt(p:Point):int
+        {
+            var bmp:BitmapData = new BitmapData(1, 1, true, 0);
+            bmp.draw(stage, new Matrix(1, 0, 0, 1, -p.x, -p.y));
+            var a:int = bmp.getPixel32(0, 0) >>> 24;
+            bmp.dispose();
+            return a;
+        }
+
+        private static function setFlashVisible(o:DisplayObject, value:Boolean):void
+        {
+            if (o is UIComponent)
+            {
+                UIComponent(o).mx_internal::$visible = value; // no show/hide events
+            }
+            else
+            {
+                o.visible = value;
+            }
+        }
+
+        private static function describe(o:DisplayObject):String
+        {
+            var s:String = getQualifiedClassName(o).replace(/^.*::/, "");
+            if (o is UIComponent)
+            {
+                var c:UIComponent = UIComponent(o);
+                if (c.id != null)
+                {
+                    s += "#" + c.id;
+                }
+                s += " bg=" + hex(c.getStyle("backgroundColor")) + "/" + c.getStyle("backgroundAlpha");
+                var skin:Object = "skin" in c ? c["skin"] : null;
+                if (skin != null)
+                {
+                    s += " skin=" + getQualifiedClassName(skin).replace(/^.*::/, "");
+                }
+            }
+            return s;
+        }
+
+        private static function hex(v:*):String
+        {
+            return v === undefined || v === null ? "-" : "#" + uint(v).toString(16);
         }
 
         /** True when the layer and all its ancestors are visible. */
