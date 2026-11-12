@@ -17,6 +17,10 @@ package org.falpi.ags.layers.vectorTiles.mvt
         private var m_featureStarts:Vector.<uint> = new Vector.<uint>();
         private var m_featureLengths:Vector.<uint> = new Vector.<uint>();
         private var m_features:Vector.<MvtFeature>;
+        private var m_indexes:Object = {};
+
+        /** Free slot for the renderer: filter results computed on this layer. */
+        public var filterCache:Object = {};
 
         public function MvtLayer(bytes:ByteArray, start:uint, length:uint)
         {
@@ -69,6 +73,33 @@ package org.falpi.ags.layers.vectorTiles.mvt
                 }
             }
             return m_features;
+        }
+
+        /**
+         * Index of the features by the value of a property: String(value) -> Vector.&lt;int&gt; of
+         * feature positions in ascending order. Built on first use and kept with the layer.
+         */
+        public function indexBy(property:String):Object
+        {
+            var index:Object = m_indexes[property];
+            if (index == null)
+            {
+                index = {};
+                var all:Vector.<MvtFeature> = features;
+                var n:int = all.length;
+                for (var i:int = 0; i < n; i++)
+                {
+                    var key:String = String(all[i].properties[property]);
+                    var bucket:Vector.<int> = index[key];
+                    if (bucket == null)
+                    {
+                        bucket = index[key] = new Vector.<int>();
+                    }
+                    bucket.push(i);
+                }
+                m_indexes[property] = index;
+            }
+            return index;
         }
 
         private static function readValue(pbf:PbfReader):*

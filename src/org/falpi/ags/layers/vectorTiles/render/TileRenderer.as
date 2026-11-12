@@ -2,6 +2,7 @@ package org.falpi.ags.layers.vectorTiles.render
 {
     import org.falpi.ags.layers.vectorTiles.mvt.MvtFeature;
     import org.falpi.ags.layers.vectorTiles.mvt.MvtLayer;
+    import org.falpi.ags.layers.vectorTiles.style.Filter;
     import org.falpi.ags.layers.vectorTiles.style.Style;
     import org.falpi.ags.layers.vectorTiles.style.StyleColor;
     import org.falpi.ags.layers.vectorTiles.style.StyleLayer;
@@ -231,12 +232,12 @@ package org.falpi.ags.layers.vectorTiles.render
                 }
             }
 
-            var features:Vector.<MvtFeature> = data.features;
+            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
             {
                 var feature:MvtFeature = features[i];
-                if (feature.type != MvtFeature.POLYGON || !layer.filter.test(feature, m_zoom))
+                if (feature.type != MvtFeature.POLYGON)
                 {
                     continue;
                 }
@@ -291,6 +292,72 @@ package org.falpi.ags.layers.vectorTiles.render
             {
                 flush(groupAlpha);
             }
+        }
+
+        /**
+         * Features of the source layer that pass the filter of the style layer, in tile order.
+         * When the filter requires a property value, only the features with that value are tested
+         * (index on the source layer). The result is cached on the source layer, so overzoomed
+         * tiles drawn from the same data tile do not filter it again.
+         */
+        private function filteredFeatures(layer:StyleLayer, data:MvtLayer):Vector.<MvtFeature>
+        {
+            var filter:Filter = layer.filter;
+            var cacheKey:String = filter.zoomDependent ? filter.id + "@" + m_zoom : String(filter.id);
+            var result:Vector.<MvtFeature> = data.filterCache[cacheKey] as Vector.<MvtFeature>;
+            if (result != null)
+            {
+                return result;
+            }
+            result = new Vector.<MvtFeature>();
+            var all:Vector.<MvtFeature> = data.features;
+            var feature:MvtFeature;
+            var i:int;
+            if (filter.keyProperty != null)
+            {
+                var index:Object = data.indexBy(filter.keyProperty);
+                var positions:Vector.<int> = new Vector.<int>();
+                var buckets:int = 0;
+                for (var value:String in filter.keyValues)
+                {
+                    var bucket:Vector.<int> = index[value] as Vector.<int>;
+                    if (bucket != null)
+                    {
+                        positions = positions.concat(bucket);
+                        buckets++;
+                    }
+                }
+                if (buckets > 1)
+                {
+                    positions.sort(compareInt); // keep the drawing order of the tile
+                }
+                for (i = 0; i < positions.length; i++)
+                {
+                    feature = all[positions[i]];
+                    if (filter.test(feature, m_zoom))
+                    {
+                        result.push(feature);
+                    }
+                }
+            }
+            else
+            {
+                for (i = 0; i < all.length; i++)
+                {
+                    feature = all[i];
+                    if (filter.test(feature, m_zoom))
+                    {
+                        result.push(feature);
+                    }
+                }
+            }
+            data.filterCache[cacheKey] = result;
+            return result;
+        }
+
+        private static function compareInt(a:int, b:int):Number
+        {
+            return a - b;
         }
 
         private function patternOf(layer:StyleLayer, property:String, feature:MvtFeature):BitmapData
@@ -361,12 +428,12 @@ package org.falpi.ags.layers.vectorTiles.render
             }
 
             var pad:Number = 2;
-            var features:Vector.<MvtFeature> = data.features;
+            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
             {
                 var feature:MvtFeature = features[i];
-                if (feature.type == MvtFeature.POINT || !layer.filter.test(feature, m_zoom))
+                if (feature.type == MvtFeature.POINT)
                 {
                     continue;
                 }
@@ -554,11 +621,11 @@ package org.falpi.ags.layers.vectorTiles.render
 
         private function drawCircleLayer(layer:StyleLayer, data:MvtLayer, k:Number, ox:Number, oy:Number):void
         {
-            var features:Vector.<MvtFeature> = data.features;
+            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
             for (var i:int = 0; i < features.length; i++)
             {
                 var feature:MvtFeature = features[i];
-                if (feature.type != MvtFeature.POINT || !layer.filter.test(feature, m_zoom))
+                if (feature.type != MvtFeature.POINT)
                 {
                     continue;
                 }
@@ -607,15 +674,11 @@ package org.falpi.ags.layers.vectorTiles.render
             var placement:String = String(layer.value("symbol-placement", m_zoom));
             var alongLine:Boolean = placement == "line" || placement == "line-center";
             var size:Number = m_size;
-            var features:Vector.<MvtFeature> = data.features;
+            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
             {
                 var feature:MvtFeature = features[i];
-                if (!layer.filter.test(feature, m_zoom))
-                {
-                    continue;
-                }
                 var parts:Array = feature.loadGeometry();
                 var candidate:SymbolCandidate = null;
                 var p:int;

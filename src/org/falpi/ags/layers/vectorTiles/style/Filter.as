@@ -8,11 +8,143 @@ package org.falpi.ags.layers.vectorTiles.style
      */
     public final class Filter
     {
+        private static var s_nextId:int = 0;
+
+        /** Unique id of the filter (key of the per-tile result cache). */
+        public var id:int;
+        /** True when the result may depend on the zoom (expression filters using ["zoom"]). */
+        public var zoomDependent:Boolean;
+        /**
+         * Property that a matching feature must have with one of keyValues (as String),
+         * or null when the filter has no such condition. Used only to preselect candidates:
+         * the full test still decides.
+         */
+        public var keyProperty:String;
+        /** String(value) -> true for the accepted values of keyProperty. */
+        public var keyValues:Object;
+
         private var m_test:Function;
 
         public function Filter(json:*)
         {
+            id = s_nextId++;
             m_test = compile(json);
+            zoomDependent = json is Array && JSON.stringify(json).indexOf("\"zoom\"") >= 0;
+            var key:Object = keyCondition(json);
+            if (key != null)
+            {
+                keyProperty = key.property;
+                keyValues = {};
+                for each (var v:* in key.values)
+                {
+                    keyValues[String(v)] = true;
+                }
+            }
+        }
+
+        /**
+         * Finds a condition "property is one of these values" that every matching feature must satisfy:
+         * ==, in, match with boolean outputs, or one of those inside "all". Returns {property, values} or null.
+         */
+        private static function keyCondition(json:*):Object
+        {
+            var f:Array = json as Array;
+            if (f == null || f.length < 2)
+            {
+                return null;
+            }
+            var i:int;
+            var values:Array;
+            switch (String(f[0]))
+            {
+                case "all":
+                    for (i = 1; i < f.length; i++)
+                    {
+                        var sub:Object = keyCondition(f[i]);
+                        if (sub != null)
+                        {
+                            return sub;
+                        }
+                    }
+                    return null;
+                case "==":
+                    if (f.length != 3)
+                    {
+                        return null;
+                    }
+                    if (f[1] is String && !(f[2] is Array))
+                    {
+                        return plainKey(String(f[1]), [f[2]]);
+                    }
+                    if (getProperty(f[1]) != null && !(f[2] is Array))
+                    {
+                        return valuesKey(getProperty(f[1]), [f[2]]);
+                    }
+                    if (getProperty(f[2]) != null && !(f[1] is Array))
+                    {
+                        return valuesKey(getProperty(f[2]), [f[1]]);
+                    }
+                    return null;
+                case "in":
+                    if (f.length >= 3 && f[1] is String && !(f[2] is Array))
+                    {
+                        return plainKey(String(f[1]), f.slice(2)); // legacy ["in", key, v1, v2...]
+                    }
+                    if (f.length == 3 && getProperty(f[1]) != null)
+                    {
+                        var list:Array = f[2] as Array;
+                        if (list != null && list.length == 2 && list[0] == "literal" && list[1] is Array)
+                        {
+                            return valuesKey(getProperty(f[1]), list[1] as Array);
+                        }
+                    }
+                    return null;
+                case "match":
+                    // ["match", ["get", p], label, true|false, ..., fallback false]
+                    if (getProperty(f[1]) == null || f.length < 5 || f.length % 2 != 1 || f[f.length - 1] !== false)
+                    {
+                        return null;
+                    }
+                    values = [];
+                    for (i = 2; i < f.length - 1; i += 2)
+                    {
+                        if (!(f[i + 1] is Boolean))
+                        {
+                            return null;
+                        }
+                        if (f[i + 1] === true)
+                        {
+                            values = values.concat(f[i] is Array ? f[i] : [f[i]]);
+                        }
+                    }
+                    return valuesKey(getProperty(f[1]), values);
+                default:
+                    return null;
+            }
+        }
+
+        private static function plainKey(property:String, values:Array):Object
+        {
+            return property == "$type" || property == "$id" ? null : valuesKey(property, values);
+        }
+
+        private static function valuesKey(property:String, values:Array):Object
+        {
+            for each (var v:* in values)
+            {
+                if (v == null || v is Array || typeof(v) == "object")
+                {
+                    return null;
+                }
+            }
+            return {property: property, values: values};
+        }
+
+        /** Property name of a ["get", name] expression, or null. */
+        private static function getProperty(expression:*):String
+        {
+            var e:Array = expression as Array;
+            return e != null && e.length == 2 && e[0] == "get" && e[1] is String ? String(e[1]) : null;
         }
 
         public function test(feature:MvtFeature, zoom:Number):Boolean
