@@ -1,8 +1,10 @@
 package org.falpi.ags.layers.vectorTiles.gpu
 {
     import org.falpi.ags.layers.vectorTiles.mvt.MvtFeature;
+    import org.falpi.ags.layers.vectorTiles.mvt.VectorTile;
     import org.falpi.ags.layers.vectorTiles.render.LayerBucket;
     import org.falpi.ags.layers.vectorTiles.render.SourceTile;
+    import org.falpi.ags.layers.vectorTiles.render.SpriteAtlas;
     import org.falpi.ags.layers.vectorTiles.style.StyleColor;
 
     import flash.display.BitmapData;
@@ -26,8 +28,10 @@ package org.falpi.ags.layers.vectorTiles.gpu
      * Draws prepared buckets with Stage3D, under the whole display list. One instance per layer;
      * the first Stage3D of the stage is used by one renderer at a time.
      *
-     * Coordinates: meshes keep the geometry in tile extent units; each draw maps them to clip space
-     * with one constant register (scale, offset), so the same mesh serves every tile and every frame.
+     * All the fill buckets of a data tile at a zoom go into one mesh (style order kept by the index
+     * order), so a display tile costs one draw call per source. Meshes keep the geometry in tile extent
+     * units; each draw maps them to clip space with one constant register (scale, offset), so the same
+     * mesh serves every display tile drawn from the data tile (overzoom) and every frame.
      */
     public final class GpuRenderer
     {
@@ -36,6 +40,16 @@ package org.falpi.ags.layers.vectorTiles.gpu
         private static var s_owners:Dictionary = new Dictionary(true);
         /** Called (once) when a renderer releases its Stage3D: layers waiting to use it. */
         private static var s_waiting:Array = [];
+
+        private static const FILL_VERTEX:String =
+            "mov vt0, vc1\n" +                  // (0, 0, 0, 1)
+            "mul vt0.xy, va0.xy, vc0.xy\n" +    // tile units -> clip space
+            "add vt0.xy, vt0.xy, vc0.zw\n" +
+            "mov op, vt0\n" +
+            "mov v0, va1\n";                    // color
+        private static const FILL_FRAGMENT:String =
+            "mul ft0, v0, fc0\n" +              // fc0: color multiplier
+            "mov oc, ft0\n";
 
         /** Registers a function called when a Stage3D is released by another renderer. */
         public static function waitForStage3D(callback:Function):void
@@ -55,20 +69,12 @@ package org.falpi.ags.layers.vectorTiles.gpu
             }
         }
 
-        private static const FILL_VERTEX:String =
-            "mov vt0, vc1\n" +                  // (0, 0, 0, 1)
-            "mul vt0.xy, va0.xy, vc0.xy\n" +    // tile units -> clip space
-            "add vt0.xy, vt0.xy, vc0.zw\n" +
-            "mov op, vt0\n" +
-            "mov v0, va1\n";                    // color
-        private static const FILL_FRAGMENT:String =
-            "mul ft0, v0, fc0\n" +              // fc0 = (1, 1, 1, layer alpha)
-            "mov oc, ft0\n";
-
         private var m_stage:Stage;
         private var m_stage3D:Stage3D;
         private var m_context:Context3D;
         private var m_fillProgram:Program3D;
+        private var m_veilVertices:VertexBuffer3D;
+        private var m_veilIndices:IndexBuffer3D;
         private var m_generation:int = 0;
         private var m_onState:Function;
 
@@ -78,8 +84,10 @@ package org.falpi.ags.layers.vectorTiles.gpu
         private var m_frame:int = 0;
         private var m_alpha:Number = 1;
 
-        /** bucket -> mesh. */
+        /** VectorTile -> {zoom key -> mesh}. */
         private var m_meshes:Dictionary = new Dictionary();
+        /** sprite name -> {rgb, a}: average color of fill patterns (patterns are not textured yet). */
+        private var m_patternColors:Object = {};
 
         /** True once a hardware context is ready. */
         public var available:Boolean = false;
@@ -89,6 +97,8 @@ package org.falpi.ags.layers.vectorTiles.gpu
         public var busy:Boolean = false;
         /** Stage3D driver description (Context3D.driverInfo). */
         public var driverInfo:String;
+        /** Sprites of the style (fill-pattern colors). */
+        public var sprites:SpriteAtlas;
         /** Diagnostics: when set, the next frame is copied here (back buffer size) and the field is cleared. */
         public var captureTarget:BitmapData;
 
@@ -196,6 +206,7 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 m_fillProgram = m_context.createProgram();
                 m_fillProgram.upload(Agal.assemble(false, FILL_VERTEX), Agal.assemble(true, FILL_FRAGMENT));
                 m_context.setBlendFactors(Context3DBlendFactor.SOURCE_ALPHA, Context3DBlendFactor.ONE_MINUS_SOURCE_ALPHA);
+                createVeil();
             }
             catch (error:Error)
             {
@@ -208,6 +219,22 @@ package org.falpi.ags.layers.vectorTiles.gpu
             {
                 m_onState();
             }
+        }
+
+        /** Full screen white quad (clip space) used to fade the frame for the layer opacity. */
+        private function createVeil():void
+        {
+            var data:ByteArray = newVertexBytes();
+            for each (var corner:Array in [[-1, -1], [1, -1], [1, 1], [-1, 1]])
+            {
+                data.writeFloat(corner[0]);
+                data.writeFloat(corner[1]);
+                data.writeUnsignedInt(0xFFFFFFFF);
+            }
+            m_veilVertices = m_context.createVertexBuffer(4, 3);
+            m_veilVertices.uploadFromByteArray(data, 0, 0, 4);
+            m_veilIndices = m_context.createIndexBuffer(6);
+            m_veilIndices.uploadFromVector(Vector.<uint>([0, 1, 2, 0, 2, 3]), 0, 6);
         }
 
         // ------------------------------------------------------------------
@@ -225,6 +252,8 @@ package org.falpi.ags.layers.vectorTiles.gpu
 
         /**
          * Starts a frame over the given stage rectangle (the map), cleared with the background color.
+         * @param alpha effective opacity of the layer: applied at the end by fading towards white, like the
+         *        CPU tiles over the (white) map container
          * Returns false when nothing can be drawn.
          */
         public function beginFrame(view:Rectangle, background:StyleColor, alpha:Number):Boolean
@@ -241,7 +270,7 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 return false;
             }
             m_frame++;
-            m_alpha = alpha;
+            m_alpha = Math.max(0, Math.min(1, alpha));
             m_view.x = Math.round(view.x);
             m_view.y = Math.round(view.y);
             m_view.width = width;
@@ -266,26 +295,36 @@ package org.falpi.ags.layers.vectorTiles.gpu
             }
             m_context.setProgram(m_fillProgram);
             m_context.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 1, Vector.<Number>([0, 0, 0, 1]));
-            m_context.setProgramConstantsFromVector(Context3DProgramType.FRAGMENT, 0, Vector.<Number>([1, 1, 1, alpha]));
+            m_context.setProgramConstantsFromVector(Context3DProgramType.FRAGMENT, 0, Vector.<Number>([1, 1, 1, 1]));
             return true;
         }
 
         /**
-         * Draws a fill bucket of one display tile.
-         * @param source data tile placement (overzoom scale and offset) of the display tile
+         * Builds (if needed) the meshes of a display tile, so that drawing it later costs no CPU time.
+         * @param fills {bucket, source} of the tile in drawing order (TileRenderer gpuFills)
+         */
+        public function prepareTile(fills:Array, zoom:Number):void
+        {
+            if (!available || m_context == null)
+            {
+                return;
+            }
+            for each (var group:Array in groups(fills))
+            {
+                meshFor(group, zoom);
+            }
+        }
+
+        /**
+         * Draws the fills of one display tile.
          * @param size display tile size in tile pixels
          * @param stageX, stageY stage position of the tile pixel (0, 0)
          * @param stageScale stage pixels per tile pixel
          * @param clip stage rectangle of the display tile
          */
-        public function drawFill(b:LayerBucket, source:SourceTile, size:Number, stageX:Number, stageY:Number,
+        public function drawTile(fills:Array, zoom:Number, size:Number, stageX:Number, stageY:Number,
                                  stageScale:Number, clip:Rectangle):void
         {
-            var mesh:Object = fillMesh(b);
-            if (mesh == null || mesh.chunks.length == 0)
-            {
-                return;
-            }
             var scissor:Rectangle = clip.intersection(m_view);
             if (scissor.width < 1 || scissor.height < 1)
             {
@@ -294,28 +333,45 @@ package org.falpi.ags.layers.vectorTiles.gpu
             scissor.offset(-m_view.x, -m_view.y);
             m_context.setScissorRectangle(new Rectangle(Math.floor(scissor.x), Math.floor(scissor.y),
                 Math.ceil(scissor.width), Math.ceil(scissor.height)));
-
-            // tile units -> tile pixels -> stage -> clip space
-            var k:Number = size * source.scale / mesh.extent;
-            var ox:Number = -source.offsetX * size + b.translateX;
-            var oy:Number = -source.offsetY * size + b.translateY;
-            var sx:Number = k * stageScale * 2 / m_view.width;
-            var sy:Number = -k * stageScale * 2 / m_view.height;
-            var tx:Number = (stageX + ox * stageScale - m_view.x) * 2 / m_view.width - 1;
-            var ty:Number = 1 - (stageY + oy * stageScale - m_view.y) * 2 / m_view.height;
-            m_context.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 0, Vector.<Number>([sx, sy, tx, ty]));
-            for each (var chunk:Object in mesh.chunks)
+            for each (var group:Array in groups(fills))
             {
-                m_context.setVertexBufferAt(0, chunk.vertices, 0, Context3DVertexBufferFormat.FLOAT_2);
-                m_context.setVertexBufferAt(1, chunk.vertices, 2, Context3DVertexBufferFormat.BYTES_4);
-                m_context.drawTriangles(chunk.indices, 0, chunk.triangles);
+                var mesh:Object = meshFor(group, zoom);
+                if (mesh.chunks.length == 0)
+                {
+                    continue;
+                }
+                var source:SourceTile = group[0].source;
+                // tile units -> tile pixels -> stage -> clip space
+                var k:Number = size * source.scale / mesh.extent;
+                var ox:Number = -source.offsetX * size;
+                var oy:Number = -source.offsetY * size;
+                var sx:Number = k * stageScale * 2 / m_view.width;
+                var sy:Number = -k * stageScale * 2 / m_view.height;
+                var tx:Number = (stageX + ox * stageScale - m_view.x) * 2 / m_view.width - 1;
+                var ty:Number = 1 - (stageY + oy * stageScale - m_view.y) * 2 / m_view.height;
+                m_context.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 0, Vector.<Number>([sx, sy, tx, ty]));
+                for each (var chunk:Object in mesh.chunks)
+                {
+                    m_context.setVertexBufferAt(0, chunk.vertices, 0, Context3DVertexBufferFormat.FLOAT_2);
+                    m_context.setVertexBufferAt(1, chunk.vertices, 2, Context3DVertexBufferFormat.BYTES_4);
+                    m_context.drawTriangles(chunk.indices, 0, chunk.triangles);
+                }
+                mesh.frame = m_frame;
             }
-            mesh.frame = m_frame;
         }
 
         public function endFrame():void
         {
             m_context.setScissorRectangle(null);
+            if (m_alpha < 1)
+            {
+                // layer opacity: fade the whole frame towards white
+                m_context.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 0, Vector.<Number>([1, 1, 0, 0]));
+                m_context.setProgramConstantsFromVector(Context3DProgramType.FRAGMENT, 0, Vector.<Number>([1, 1, 1, 1 - m_alpha]));
+                m_context.setVertexBufferAt(0, m_veilVertices, 0, Context3DVertexBufferFormat.FLOAT_2);
+                m_context.setVertexBufferAt(1, m_veilVertices, 2, Context3DVertexBufferFormat.BYTES_4);
+                m_context.drawTriangles(m_veilIndices, 0, 2);
+            }
             if (captureTarget != null)
             {
                 m_context.drawToBitmapData(captureTarget);
@@ -332,73 +388,162 @@ package org.falpi.ags.layers.vectorTiles.gpu
         // meshes
         // ------------------------------------------------------------------
 
-        private function fillMesh(b:LayerBucket):Object
+        /** Splits the fills of a tile into runs with the same data tile (normally one run). */
+        private static function groups(fills:Array):Array
         {
-            var mesh:Object = m_meshes[b];
-            if (mesh != null && mesh.generation == m_generation)
+            var result:Array = [];
+            var current:Array = null;
+            for each (var fill:Object in fills)
             {
-                return mesh;
+                if (current == null || current[0].source.tile != fill.source.tile)
+                {
+                    current = [];
+                    result.push(current);
+                }
+                current.push(fill);
             }
-            mesh = {generation: m_generation, frame: m_frame, chunks: [], extent: 4096};
-            m_meshes[b] = mesh;
+            return result;
+        }
 
+        /** The mesh of a run of fills of one data tile (cached per data tile and zoom). */
+        private function meshFor(group:Array, zoom:Number):Object
+        {
+            var data:VectorTile = group[0].source.tile;
+            var byZoom:Object = m_meshes[data];
+            if (byZoom == null)
+            {
+                byZoom = m_meshes[data] = {};
+            }
+            var key:String = zoom + "#" + group.length;
+            var mesh:Object = byZoom[key];
+            if (mesh == null || mesh.generation != m_generation)
+            {
+                mesh = buildMesh(group);
+                byZoom[key] = mesh;
+            }
+            return mesh;
+        }
+
+        private function buildMesh(group:Array):Object
+        {
+            var mesh:Object = {generation: m_generation, frame: m_frame, chunks: [], extent: 4096};
             var vertices:ByteArray = newVertexBytes();
             var indices:Vector.<uint> = new Vector.<uint>();
             var count:int = 0;
-            var features:Vector.<MvtFeature> = b.features;
-            for (var i:int = 0; i < features.length; i++)
+            for each (var fill:Object in group)
             {
-                var feature:MvtFeature = features[i];
-                mesh.extent = feature.extent;
-                var color:StyleColor = b.perFeature ? b.fillColors[i] : b.fillColor;
-                var opacity:Number = b.perFeature ? b.fillOpacities[i] : b.fillOpacity;
-                var alpha:Number = color != null ? color.a * opacity * b.groupAlpha : 0;
-                if (alpha <= 0)
+                var b:LayerBucket = fill.bucket;
+                var features:Vector.<MvtFeature> = b.features;
+                for (var i:int = 0; i < features.length; i++)
                 {
-                    continue; // patterns and outlines are not drawn on the GPU yet
-                }
-                var r:int = (color.rgb >> 16) & 255;
-                var g:int = (color.rgb >> 8) & 255;
-                var bl:int = color.rgb & 255;
-                var a:int = Math.round(Math.min(1, alpha) * 255);
-                for each (var polygon:Object in polygons(feature.loadGeometry()))
-                {
-                    var data:Vector.<Number> = polygon.data;
-                    var n:int = data.length >> 1;
-                    if (n < 3)
+                    var feature:MvtFeature = features[i];
+                    mesh.extent = feature.extent;
+                    var rgb:uint;
+                    var alpha:Number;
+                    var opacity:Number = b.perFeature ? b.fillOpacities[i] : b.fillOpacity;
+                    var pattern:String = b.perFeature ? b.patternNames[i] : b.patternName;
+                    if (pattern != null)
                     {
-                        continue;
+                        // patterns are not textured yet: their average color
+                        var average:Object = patternColor(pattern);
+                        if (average == null)
+                        {
+                            continue;
+                        }
+                        rgb = average.rgb;
+                        alpha = average.a * opacity * b.groupAlpha;
                     }
-                    var triangles:Vector.<int> = Earcut.triangulate(data, polygon.holes);
-                    if (triangles.length == 0)
+                    else
                     {
-                        continue;
+                        var color:StyleColor = b.perFeature ? b.fillColors[i] : b.fillColor;
+                        if (color == null)
+                        {
+                            continue;
+                        }
+                        rgb = color.rgb;
+                        alpha = color.a * opacity * b.groupAlpha;
                     }
-                    if (count + n > MAX_VERTICES)
+                    if (alpha <= 0)
                     {
-                        addChunk(mesh, vertices, indices, count);
-                        vertices = newVertexBytes();
-                        indices = new Vector.<uint>();
-                        count = 0;
+                        continue; // e.g. outline-only layers (outlines are not drawn on the GPU yet)
                     }
-                    for (var v:int = 0; v < n; v++)
+                    var r:int = (rgb >> 16) & 255;
+                    var g:int = (rgb >> 8) & 255;
+                    var bl:int = rgb & 255;
+                    var a:int = Math.round(Math.min(1, alpha) * 255);
+                    for each (var polygon:Object in polygons(feature.loadGeometry()))
                     {
-                        vertices.writeFloat(data[v * 2]);
-                        vertices.writeFloat(data[v * 2 + 1]);
-                        vertices.writeByte(r);
-                        vertices.writeByte(g);
-                        vertices.writeByte(bl);
-                        vertices.writeByte(a);
+                        var coords:Vector.<Number> = polygon.data;
+                        var n:int = coords.length >> 1;
+                        if (n < 3)
+                        {
+                            continue;
+                        }
+                        var triangles:Vector.<int> = Earcut.triangulate(coords, polygon.holes);
+                        if (triangles.length == 0)
+                        {
+                            continue;
+                        }
+                        if (count + n > MAX_VERTICES)
+                        {
+                            addChunk(mesh, vertices, indices, count);
+                            vertices = newVertexBytes();
+                            indices = new Vector.<uint>();
+                            count = 0;
+                        }
+                        for (var v:int = 0; v < n; v++)
+                        {
+                            vertices.writeFloat(coords[v * 2]);
+                            vertices.writeFloat(coords[v * 2 + 1]);
+                            vertices.writeByte(r);
+                            vertices.writeByte(g);
+                            vertices.writeByte(bl);
+                            vertices.writeByte(a);
+                        }
+                        for (var t:int = 0; t < triangles.length; t++)
+                        {
+                            indices.push(count + triangles[t]);
+                        }
+                        count += n;
                     }
-                    for (var t:int = 0; t < triangles.length; t++)
-                    {
-                        indices.push(count + triangles[t]);
-                    }
-                    count += n;
                 }
             }
             addChunk(mesh, vertices, indices, count);
             return mesh;
+        }
+
+        /** Average color (alpha weighted) of a sprite, or null when unknown. */
+        private function patternColor(name:String):Object
+        {
+            if (m_patternColors.hasOwnProperty(name))
+            {
+                return m_patternColors[name];
+            }
+            var result:Object = null;
+            var image:BitmapData = sprites != null ? sprites.getImage(name) : null;
+            if (image != null)
+            {
+                var pixels:Vector.<uint> = image.getVector(image.rect);
+                var r:Number = 0;
+                var g:Number = 0;
+                var b:Number = 0;
+                var weight:Number = 0;
+                for each (var p:uint in pixels)
+                {
+                    var a:Number = (p >>> 24) / 255;
+                    r += ((p >> 16) & 255) * a;
+                    g += ((p >> 8) & 255) * a;
+                    b += (p & 255) * a;
+                    weight += a;
+                }
+                if (weight > 0)
+                {
+                    result = {rgb: (Math.round(r / weight) << 16) | (Math.round(g / weight) << 8) | Math.round(b / weight),
+                              a: weight / pixels.length};
+                }
+            }
+            m_patternColors[name] = result;
+            return result;
         }
 
         /** Vertex layout: x, y (float, little endian), color r, g, b, a (bytes). */
@@ -475,22 +620,38 @@ package org.falpi.ags.layers.vectorTiles.gpu
         /** Releases the meshes not drawn for a while (their tiles left the view or the cache). */
         private function purgeMeshes():void
         {
-            for (var key:Object in m_meshes)
+            for (var data:Object in m_meshes)
             {
-                var mesh:Object = m_meshes[key];
-                if (m_frame - mesh.frame > MESH_TTL_FRAMES || mesh.generation != m_generation)
+                var byZoom:Object = m_meshes[data];
+                var alive:Boolean = false;
+                for (var key:String in byZoom)
                 {
-                    disposeMesh(mesh);
-                    delete m_meshes[key];
+                    var mesh:Object = byZoom[key];
+                    if (m_frame - mesh.frame > MESH_TTL_FRAMES || mesh.generation != m_generation)
+                    {
+                        disposeMesh(mesh);
+                        delete byZoom[key];
+                    }
+                    else
+                    {
+                        alive = true;
+                    }
+                }
+                if (!alive)
+                {
+                    delete m_meshes[data];
                 }
             }
         }
 
         private function disposeMeshes():void
         {
-            for each (var mesh:Object in m_meshes)
+            for each (var byZoom:Object in m_meshes)
             {
-                disposeMesh(mesh);
+                for each (var mesh:Object in byZoom)
+                {
+                    disposeMesh(mesh);
+                }
             }
             m_meshes = new Dictionary();
         }

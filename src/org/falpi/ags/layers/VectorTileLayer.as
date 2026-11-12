@@ -1182,6 +1182,18 @@ package org.falpi.ags.layers
             tile.bitmap = bitmap;
             tile.gpuFills = gpuFills;
             m_bitmapTiles[bitmap] = tile;
+            if (gpuFills != null && gpuFills.length > 0)
+            {
+                // triangulate and upload now (inside the frame budget), not when the frame is drawn
+                m_gpu.sprites = m_sprites;
+                try
+                {
+                    m_gpu.prepareTile(gpuFills, tile.zoom);
+                }
+                catch (error:Error)
+                {
+                }
+            }
             tile.state = DONE;
             m_tileContainer.addChild(bitmap);
             positionTile(tile);
@@ -1335,7 +1347,10 @@ package org.falpi.ags.layers
             var bottomRight:Point = map.localToGlobal(new Point(map.width, map.height));
             var view:Rectangle = new Rectangle(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
             var background:StyleColor = m_renderer != null ? m_renderer.backgroundColor(m_zoom) : null;
-            if (!m_gpu.beginFrame(view, background, alpha))
+            // effective opacity, including the native alpha set by hosts (e.g. a custom alpha setter)
+            var opacity:Number = transform.concatenatedColorTransform.alphaMultiplier;
+            m_gpu.sprites = m_sprites;
+            if (!m_gpu.beginFrame(view, background, opacity))
             {
                 return;
             }
@@ -1352,10 +1367,7 @@ package org.falpi.ags.layers
                 var p1:Point = bitmap.localToGlobal(new Point(bitmap.bitmapData.width, bitmap.bitmapData.height));
                 var stageScale:Number = (p1.x - p0.x) / tile.size;
                 var clip:Rectangle = new Rectangle(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
-                for each (var fill:Object in tile.gpuFills)
-                {
-                    m_gpu.drawFill(fill.bucket, fill.source, tile.size, p0.x, p0.y, stageScale, clip);
-                }
+                m_gpu.drawTile(tile.gpuFills, tile.zoom, tile.size, p0.x, p0.y, stageScale, clip);
             }
             m_gpu.endFrame();
         }
