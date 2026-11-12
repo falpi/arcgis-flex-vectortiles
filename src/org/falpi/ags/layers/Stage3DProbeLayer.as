@@ -4,6 +4,8 @@ package org.falpi.ags.layers
     import com.esri.ags.geometry.Extent;
     import com.esri.ags.layers.WebTiledLayer;
 
+    import flash.display.Bitmap;
+    import flash.display.BitmapData;
     import flash.display.DisplayObject;
     import flash.display.Stage3D;
     import flash.display3D.Context3D;
@@ -154,6 +156,8 @@ package org.falpi.ags.layers
             m_status.defaultTextFormat = new TextFormat("_sans", 11, 0x000000);
             m_status.mouseEnabled = false;
             stage.addChild(m_status);
+            m_thumb = new Bitmap();
+            stage.addChild(m_thumb);
             status("requesting Context3D...");
             if (stage.stage3Ds == null || stage.stage3Ds.length == 0)
             {
@@ -181,6 +185,10 @@ package org.falpi.ags.layers
             if (m_status != null && m_status.parent != null)
             {
                 m_status.parent.removeChild(m_status);
+            }
+            if (m_thumb != null && m_thumb.parent != null)
+            {
+                m_thumb.parent.removeChild(m_thumb);
             }
             if (m_stage3D != null)
             {
@@ -286,6 +294,9 @@ package org.falpi.ags.layers
             var onScreen:Boolean = width >= 50 && height >= 50 && isOnScreen();
             m_stage3D.visible = onScreen;
             m_status.visible = onScreen;
+            m_thumb.visible = onScreen;
+            m_thumb.x = m_status.x;
+            m_thumb.y = m_status.y + m_status.height + 4;
             if (!onScreen)
             {
                 return;
@@ -404,7 +415,37 @@ package org.falpi.ags.layers
                     m_context.drawTriangles(m_indices, d.first, d.count / 3);
                 }
             }
+            captureThumbnail();
             m_context.present();
+        }
+
+        private var m_thumb:Bitmap;
+        private var m_thumbTime:int;
+
+        /**
+         * Diagnostic: copies what the GPU has drawn (back buffer, before present) into a small bitmap shown
+         * under the status box, in the display list. If the thumbnail shows the grid and the polygon while
+         * the map does not, the GPU works and something in the display list covers it.
+         */
+        private function captureThumbnail():void
+        {
+            var now:int = getTimer();
+            if (now - m_thumbTime < 2000)
+            {
+                return;
+            }
+            m_thumbTime = now;
+            var full:BitmapData = new BitmapData(m_bufferWidth, m_bufferHeight, false, 0xFF00FF);
+            m_context.drawToBitmapData(full);
+            var scale:Number = 240 / m_bufferWidth;
+            var thumb:BitmapData = new BitmapData(240, Math.max(1, Math.round(m_bufferHeight * scale)), false, 0xFF00FF);
+            thumb.draw(full, new Matrix(scale, 0, 0, scale), null, null, null, true);
+            full.dispose();
+            if (m_thumb.bitmapData != null)
+            {
+                m_thumb.bitmapData.dispose();
+            }
+            m_thumb.bitmapData = thumb;
         }
 
         private function stageToMap(sx:Number, sy:Number):Point
@@ -512,6 +553,14 @@ package org.falpi.ags.layers
             {
                 s += " in " + describe(o.parent); // a Shape/graphic of a component
                 return s;
+            }
+            // actual alpha of the background fill painted by the usual skins (not just the style)
+            for each (var fillName:String in ["bgRectFill", "bgFill", "backgroundFill"])
+            {
+                if (fillName in o && o[fillName] != null && "alpha" in o[fillName])
+                {
+                    s += " " + fillName + ".alpha=" + o[fillName].alpha;
+                }
             }
             if ("hostComponent" in o && o["hostComponent"] is UIComponent)
             {
