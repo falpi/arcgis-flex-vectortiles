@@ -49,9 +49,12 @@ package org.falpi.ags.layers.vectorTiles.render
          * @param tiles source name -> SourceTile
          * @param worldX, worldY pixel position of the tile in the world (keeps patterns continuous)
          * @param symbols receives the symbol candidates of the tile (may be null)
+         * @param gpuFills when not null, fill layers and the background are not drawn: the fill buckets
+         *        are appended to it as {bucket, source} in drawing order, for the GPU renderer
          */
         public function render(target:BitmapData, size:Number, zoom:Number, tiles:Object, worldX:Number, worldY:Number,
-                               symbols:Vector.<SymbolCandidate>, drawBackground:Boolean = true):void
+                               symbols:Vector.<SymbolCandidate>, drawBackground:Boolean = true,
+                               gpuFills:Array = null):void
         {
             m_target = target;
             m_size = size;
@@ -71,7 +74,7 @@ package org.falpi.ags.layers.vectorTiles.render
                 }
                 if (layer.type == "background")
                 {
-                    if (drawBackground)
+                    if (drawBackground && gpuFills == null)
                     {
                         drawBackgroundLayer(layer);
                     }
@@ -95,7 +98,15 @@ package org.falpi.ags.layers.vectorTiles.render
                 {
                     case "fill":
                     case "fill-extrusion":
-                        drawFillLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy, clip);
+                        var fillBucket:LayerBucket = BucketBuilder.bucket(layer, data, zoom, sprites);
+                        if (gpuFills == null)
+                        {
+                            drawFillLayer(fillBucket, k, ox, oy, clip);
+                        }
+                        else if (!fillBucket.empty)
+                        {
+                            gpuFills.push({bucket: fillBucket, source: source});
+                        }
                         break;
                     case "line":
                         drawLineLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy, clip);

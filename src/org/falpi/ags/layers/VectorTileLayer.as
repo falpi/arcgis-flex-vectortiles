@@ -10,6 +10,7 @@ package org.falpi.ags.layers
     import com.esri.ags.layers.TiledMapServiceLayer;
     import com.esri.ags.layers.supportClasses.LOD;
     import com.esri.ags.layers.supportClasses.TileInfo;
+    import org.falpi.ags.layers.vectorTiles.gpu.GpuRenderer;
     import org.falpi.ags.layers.vectorTiles.labels.GlyphManager;
     import org.falpi.ags.layers.vectorTiles.labels.SymbolPlacer;
     import org.falpi.ags.layers.vectorTiles.mvt.VectorTile;
@@ -23,16 +24,21 @@ package org.falpi.ags.layers
     import org.falpi.ags.layers.vectorTiles.source.BasemapResolver;
     import org.falpi.ags.layers.vectorTiles.source.TileSource;
     import org.falpi.ags.layers.vectorTiles.style.Style;
+    import org.falpi.ags.layers.vectorTiles.style.StyleColor;
 
     import flash.display.Bitmap;
     import flash.display.BitmapData;
+    import flash.display.DisplayObject;
     import flash.display.Sprite;
     import flash.events.Event;
+    import flash.geom.Point;
     import flash.geom.Rectangle;
     import flash.net.URLRequest;
     import flash.utils.ByteArray;
+    import flash.utils.Dictionary;
     import flash.utils.getTimer;
 
+    import mx.events.FlexEvent;
     import mx.rpc.Fault;
     import mx.rpc.events.FaultEvent;
 
@@ -67,6 +73,15 @@ package org.falpi.ags.layers
         /** Levels declared by the vector tile service (512 px tiles). */
         public static const SCHEME_SERVICE:String = "service";
 
+        /** Everything drawn by the CPU into bitmaps (default). */
+        public static const RENDER_CPU:String = "cpu";
+        /**
+         * Background and fills drawn by the GPU (Stage3D, under the whole display list; the page needs
+         * wmode="direct" and transparent backgrounds above the map). Falls back to "cpu" when no hardware
+         * Stage3D is available.
+         */
+        public static const RENDER_GPU:String = "gpu";
+
         private static const AGS_INTERNAL:Namespace = new Namespace("http://www.esri.com/2008/ags/internal");
         private static const TILE_SIZE:Number = 512;
         private static const WEB_MERCATOR_EXTENT:Number = 20037508.342787;
@@ -92,6 +107,11 @@ package org.falpi.ags.layers
             m_content.addChild(m_tileContainer);
             m_content.addChild(m_labelBitmap);
             addChild(m_content);
+            addEventListener(Event.ADDED_TO_STAGE, stageChanged);
+            addEventListener(Event.REMOVED_FROM_STAGE, stageChanged);
+            // the Stage3D is shared: only a visible layer uses it (basemaps switched by visibility)
+            addEventListener(FlexEvent.SHOW, stageChanged);
+            addEventListener(FlexEvent.HIDE, stageChanged);
             this.url = url;
             this.proxyURL = proxyURL;
             this.token = token;
@@ -151,6 +171,13 @@ package org.falpi.ags.layers
         private var m_updatePending:Boolean = false;
         private var m_frameListener:Boolean = false;
         private var m_panListener:Boolean = false;
+
+        private var m_gpu:GpuRenderer;
+        private var m_gpuFailed:Boolean = false;
+        private var m_gpuStatus:String = "";
+        private var m_gpuFrameListener:Boolean = false;
+        /** tile bitmap -> tile entry, to find the GPU fills of the bitmaps in display order. */
+        private var m_bitmapTiles:Dictionary = new Dictionary(true);
 
         // ------------------------------------------------------------------
         // public properties
@@ -301,6 +328,45 @@ package org.falpi.ags.layers
 
         /** Maximum number of parallel HTTP requests. */
         public var maxConnections:int = 6;
+
+        private var m_renderMode:String = RENDER_CPU;
+
+        [Bindable("renderModeChanged")]
+        [Inspectable(category="General", enumeration="cpu,gpu", defaultValue="cpu")]
+        /** RENDER_CPU (default) or RENDER_GPU. */
+        public function get renderMode():String
+        {
+            return m_renderMode;
+        }
+
+        public function set renderMode(value:String):void
+        {
+            value = value == RENDER_GPU ? RENDER_GPU : RENDER_CPU;
+            if (m_renderMode != value)
+            {
+                m_renderMode = value;
+                m_gpuFailed = false;
+                updateGpu();
+                dispatchEvent(new Event("renderModeChanged"));
+            }
+        }
+
+        [Bindable("gpuActiveChange")]
+        /**
+         * True while the GPU draws part of the layer (renderMode "gpu" with hardware Stage3D). The
+         * containers above the map must then have transparent backgrounds.
+         */
+        public function get gpuActive():Boolean
+        {
+            return m_gpu != null && m_gpu.available;
+        }
+
+        [Bindable("gpuActiveChange")]
+        /** Stage3D driver in use, or why the GPU is not used (diagnostics). */
+        public function get gpuStatus():String
+        {
+            return m_gpuStatus;
+        }
 
         /** The parsed style in use (null until the layer is loaded). */
         public function get styleDefinition():Style
@@ -947,6 +1013,7 @@ package org.falpi.ags.layers
                 {
                     bitmap.parent.removeChild(bitmap);
                 }
+                delete m_bitmapTiles[bitmap];
                 bitmap.bitmapData.dispose();
                 tile.bitmap = null;
             }
@@ -975,6 +1042,7 @@ package org.falpi.ags.layers
             }
             tile.sources = null;
             tile.symbols = null;
+            tile.gpuFills = null;
             tile.state = -1;
         }
 
@@ -1100,9 +1168,10 @@ package org.falpi.ags.layers
             var size:int = tile.size;
             var data:BitmapData = new BitmapData(size, size, true, 0);
             var symbols:Vector.<SymbolCandidate> = new Vector.<SymbolCandidate>();
+            var gpuFills:Array = gpuActive ? [] : null;
             try
             {
-                m_renderer.render(data, size, tile.zoom, tile.sources, tile.x * size, tile.y * size, symbols);
+                m_renderer.render(data, size, tile.zoom, tile.sources, tile.x * size, tile.y * size, symbols, true, gpuFills);
             }
             catch (error:Error)
             {
@@ -1111,6 +1180,8 @@ package org.falpi.ags.layers
             tile.symbols = symbols;
             var bitmap:Bitmap = new Bitmap(data);
             tile.bitmap = bitmap;
+            tile.gpuFills = gpuFills;
+            m_bitmapTiles[bitmap] = tile;
             tile.state = DONE;
             m_tileContainer.addChild(bitmap);
             positionTile(tile);
@@ -1155,6 +1226,169 @@ package org.falpi.ags.layers
                 m_updatePending = false;
                 dispatchEvent(new LayerEvent(LayerEvent.UPDATE_END, this, null, true));
             }
+        }
+
+        // ------------------------------------------------------------------
+        // GPU
+        // ------------------------------------------------------------------
+
+        private function stageChanged(event:Event):void
+        {
+            if (event.target == this)
+            {
+                updateGpu();
+            }
+        }
+
+        /** Starts or stops the GPU renderer for the current mode, stage and visibility. */
+        private function updateGpu():void
+        {
+            GpuRenderer.stopWaiting(updateGpu);
+            var wanted:Boolean = m_renderMode == RENDER_GPU && stage != null && visible && !m_gpuFailed;
+            if (wanted && m_gpu == null)
+            {
+                m_gpuStatus = "starting";
+                m_gpu = new GpuRenderer(stage, gpuStateChanged);
+                m_gpu.start();
+            }
+            else if (!wanted && m_gpu != null)
+            {
+                var wasActive:Boolean = m_gpu.available;
+                stopGpu();
+                m_gpuStatus = m_renderMode == RENDER_GPU ? m_gpuStatus : "";
+                if (wasActive)
+                {
+                    redrawForMode();
+                }
+            }
+        }
+
+        private function stopGpu():void
+        {
+            if (m_gpuFrameListener)
+            {
+                m_gpuFrameListener = false;
+                removeEventListener(Event.ENTER_FRAME, gpuFrame);
+            }
+            if (m_gpu != null)
+            {
+                m_gpu.dispose();
+                m_gpu = null;
+            }
+        }
+
+        /** The GPU became available, or failed: the tiles are drawn again for the new split. */
+        private function gpuStateChanged():void
+        {
+            if (m_gpu == null)
+            {
+                return;
+            }
+            if (m_gpu.busy)
+            {
+                // another (visible) layer has the Stage3D: draw on the CPU until it is released
+                m_gpuStatus = m_gpu.failure;
+                stopGpu();
+                GpuRenderer.waitForStage3D(updateGpu);
+                return;
+            }
+            if (m_gpu.failure != null)
+            {
+                m_gpuStatus = m_gpu.failure;
+                m_gpuFailed = true;
+                stopGpu();
+            }
+            else
+            {
+                m_gpuStatus = m_gpu.driverInfo;
+                if (!m_gpuFrameListener)
+                {
+                    m_gpuFrameListener = true;
+                    addEventListener(Event.ENTER_FRAME, gpuFrame);
+                }
+            }
+            redrawForMode();
+        }
+
+        private function redrawForMode():void
+        {
+            clearTiles(false);
+            if (m_definition != null && map != null)
+            {
+                invalidateLayer();
+            }
+            dispatchEvent(new Event("gpuActiveChange"));
+        }
+
+        /** Draws the GPU part of the visible tiles, every frame (follows pan and zoom animations). */
+        private function gpuFrame(event:Event):void
+        {
+            if (m_gpu == null || map == null || !isOnScreen())
+            {
+                if (m_gpu != null)
+                {
+                    m_gpu.hide();
+                }
+                return;
+            }
+            var topLeft:Point = map.localToGlobal(new Point(0, 0));
+            var bottomRight:Point = map.localToGlobal(new Point(map.width, map.height));
+            var view:Rectangle = new Rectangle(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+            var background:StyleColor = m_renderer != null ? m_renderer.backgroundColor(m_zoom) : null;
+            if (!m_gpu.beginFrame(view, background, alpha))
+            {
+                return;
+            }
+            var origin:Point = new Point(0, 0);
+            for (var i:int = 0; i < m_tileContainer.numChildren; i++)
+            {
+                var bitmap:Bitmap = m_tileContainer.getChildAt(i) as Bitmap;
+                var tile:Object = bitmap != null ? m_bitmapTiles[bitmap] : null;
+                if (tile == null || tile.gpuFills == null || tile.gpuFills.length == 0 || bitmap.bitmapData == null)
+                {
+                    continue;
+                }
+                var p0:Point = bitmap.localToGlobal(origin);
+                var p1:Point = bitmap.localToGlobal(new Point(bitmap.bitmapData.width, bitmap.bitmapData.height));
+                var stageScale:Number = (p1.x - p0.x) / tile.size;
+                var clip:Rectangle = new Rectangle(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+                for each (var fill:Object in tile.gpuFills)
+                {
+                    m_gpu.drawFill(fill.bucket, fill.source, tile.size, p0.x, p0.y, stageScale, clip);
+                }
+            }
+            m_gpu.endFrame();
+        }
+
+        /**
+         * Diagnostics: copies the next GPU frame (the map area, back buffer size) into target.
+         * Returns false when the GPU is not active.
+         */
+        public function captureGpuFrame(target:BitmapData):Boolean
+        {
+            if (!gpuActive)
+            {
+                return false;
+            }
+            m_gpu.captureTarget = target;
+            return true;
+        }
+
+        /** True when the layer and all its ancestors are visible. */
+        private function isOnScreen():Boolean
+        {
+            for (var d:DisplayObject = this; d != null; d = d.parent)
+            {
+                if (!d.visible)
+                {
+                    return false;
+                }
+                if (d == stage)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // ------------------------------------------------------------------
