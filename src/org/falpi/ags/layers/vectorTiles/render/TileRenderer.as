@@ -2,16 +2,12 @@ package org.falpi.ags.layers.vectorTiles.render
 {
     import org.falpi.ags.layers.vectorTiles.mvt.MvtFeature;
     import org.falpi.ags.layers.vectorTiles.mvt.MvtLayer;
-    import org.falpi.ags.layers.vectorTiles.style.Filter;
     import org.falpi.ags.layers.vectorTiles.style.Style;
     import org.falpi.ags.layers.vectorTiles.style.StyleColor;
     import org.falpi.ags.layers.vectorTiles.style.StyleLayer;
-    import org.falpi.ags.layers.vectorTiles.style.StyleProperty;
 
     import flash.display.BitmapData;
-    import flash.display.CapsStyle;
     import flash.display.Graphics;
-    import flash.display.JointStyle;
     import flash.display.LineScaleMode;
     import flash.display.Shape;
     import flash.geom.ColorTransform;
@@ -99,13 +95,13 @@ package org.falpi.ags.layers.vectorTiles.render
                 {
                     case "fill":
                     case "fill-extrusion":
-                        drawFillLayer(layer, data, k, ox, oy, clip);
+                        drawFillLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy, clip);
                         break;
                     case "line":
-                        drawLineLayer(layer, data, k, ox, oy, clip);
+                        drawLineLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy, clip);
                         break;
                     case "circle":
-                        drawCircleLayer(layer, data, k, ox, oy);
+                        drawCircleLayer(BucketBuilder.bucket(layer, data, zoom, sprites), k, ox, oy);
                         break;
                     case "symbol":
                         if (symbols != null)
@@ -184,73 +180,45 @@ package org.falpi.ags.layers.vectorTiles.render
         // fill
         // ------------------------------------------------------------------
 
-        private function drawFillLayer(layer:StyleLayer, data:MvtLayer, k:Number, ox:Number, oy:Number, clip:Boolean):void
+        private function drawFillLayer(b:LayerBucket, k:Number, ox:Number, oy:Number, clip:Boolean):void
         {
-            var extrusion:Boolean = layer.type == "fill-extrusion";
-            var pColor:StyleProperty = layer.property(extrusion ? "fill-extrusion-color" : "fill-color");
-            var pOpacity:StyleProperty = layer.property(extrusion ? "fill-extrusion-opacity" : "fill-opacity");
-            var pOutline:StyleProperty = layer.property("fill-outline-color");
-            var pPattern:StyleProperty = layer.property("fill-pattern");
-            var hasOutline:Boolean = !extrusion && layer.has("fill-outline-color");
-            var hasPattern:Boolean = !extrusion && layer.has("fill-pattern");
-            var antialias:Boolean = extrusion || layer.value("fill-antialias", m_zoom);
-            var perFeature:Boolean = pColor.featureDependent || pOpacity.featureDependent || pOutline.featureDependent || pPattern.featureDependent;
-            var translate:Array = layer.value(extrusion ? "fill-extrusion-translate" : "fill-translate", m_zoom) as Array;
-            if (translate != null)
+            if (b.empty)
             {
-                ox += Number(translate[0]);
-                oy += Number(translate[1]);
+                return;
             }
-
-            var color:StyleColor;
-            var opacity:Number = 1;
-            var outline:StyleColor;
+            ox += b.translateX;
+            oy += b.translateY;
+            var color:StyleColor = b.fillColor;
+            var opacity:Number = b.fillOpacity;
+            var outline:StyleColor = b.outlineColor;
             var pattern:BitmapData;
             var matrix:Matrix;
-            var groupAlpha:Number = 1;
-            if (!perFeature)
+            if (!b.perFeature)
             {
-                color = pColor.evaluate(m_zoom) as StyleColor;
-                opacity = pOpacity.evaluate(m_zoom);
-                outline = hasOutline ? pOutline.evaluate(m_zoom) as StyleColor : null;
-                pattern = hasPattern ? patternOf(layer, "fill-pattern", null) : null;
-                if (opacity <= 0 || (pattern == null && (color == null || color.a <= 0) && outline == null))
-                {
-                    return;
-                }
-                if (opacity < 1)
+                if (b.groupAlpha < 1)
                 {
                     // draw the layer opaque on its own and blend it once: overlapping
                     // features of the same layer must not add up
                     flush(1);
-                    groupAlpha = opacity;
-                    opacity = 1;
                 }
+                pattern = b.patternName != null ? sprites.getImage(b.patternName) : null;
                 if (pattern != null)
                 {
                     matrix = patternMatrix(pattern);
                 }
             }
 
-            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
+            var features:Vector.<MvtFeature> = b.features;
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
             {
                 var feature:MvtFeature = features[i];
-                if (feature.type != MvtFeature.POLYGON)
+                if (b.perFeature)
                 {
-                    continue;
-                }
-                if (perFeature)
-                {
-                    color = pColor.evaluate(m_zoom, feature) as StyleColor;
-                    opacity = pOpacity.evaluate(m_zoom, feature);
-                    outline = hasOutline ? pOutline.evaluate(m_zoom, feature) as StyleColor : null;
-                    pattern = hasPattern ? patternOf(layer, "fill-pattern", feature) : null;
-                    if (opacity <= 0)
-                    {
-                        continue;
-                    }
+                    color = b.fillColors[i];
+                    opacity = b.fillOpacities[i];
+                    outline = b.outlineColors[i];
+                    pattern = b.patternNames[i] != null ? sprites.getImage(b.patternNames[i]) : null;
                     matrix = pattern != null ? patternMatrix(pattern) : null;
                 }
                 var parts:Array = feature.loadGeometry();
@@ -263,7 +231,7 @@ package org.falpi.ags.layers.vectorTiles.render
                 {
                     m_g.lineStyle(0, outline.rgb, outline.a * opacity);
                 }
-                else if (antialias && pattern == null && fillAlpha >= 1)
+                else if (b.antialias && pattern == null && fillAlpha >= 1)
                 {
                     // hairline in the fill color hides the seams between adjacent polygons
                     m_g.lineStyle(0, color.rgb, 1);
@@ -288,76 +256,10 @@ package org.falpi.ags.layers.vectorTiles.render
                 m_g.endFill();
             }
             m_g.lineStyle();
-            if (groupAlpha < 1)
+            if (b.groupAlpha < 1)
             {
-                flush(groupAlpha);
+                flush(b.groupAlpha);
             }
-        }
-
-        /**
-         * Features of the source layer that pass the filter of the style layer, in tile order.
-         * When the filter requires a property value, only the features with that value are tested
-         * (index on the source layer). The result is cached on the source layer, so overzoomed
-         * tiles drawn from the same data tile do not filter it again.
-         */
-        private function filteredFeatures(layer:StyleLayer, data:MvtLayer):Vector.<MvtFeature>
-        {
-            var filter:Filter = layer.filter;
-            var cacheKey:String = filter.zoomDependent ? filter.id + "@" + m_zoom : String(filter.id);
-            var result:Vector.<MvtFeature> = data.filterCache[cacheKey] as Vector.<MvtFeature>;
-            if (result != null)
-            {
-                return result;
-            }
-            result = new Vector.<MvtFeature>();
-            var all:Vector.<MvtFeature> = data.features;
-            var feature:MvtFeature;
-            var i:int;
-            if (filter.keyProperty != null)
-            {
-                var index:Object = data.indexBy(filter.keyProperty);
-                var positions:Vector.<int> = new Vector.<int>();
-                var buckets:int = 0;
-                for (var value:String in filter.keyValues)
-                {
-                    var bucket:Vector.<int> = index[value] as Vector.<int>;
-                    if (bucket != null)
-                    {
-                        positions = positions.concat(bucket);
-                        buckets++;
-                    }
-                }
-                if (buckets > 1)
-                {
-                    positions.sort(compareInt); // keep the drawing order of the tile
-                }
-                for (i = 0; i < positions.length; i++)
-                {
-                    feature = all[positions[i]];
-                    if (filter.test(feature, m_zoom))
-                    {
-                        result.push(feature);
-                    }
-                }
-            }
-            else
-            {
-                for (i = 0; i < all.length; i++)
-                {
-                    feature = all[i];
-                    if (filter.test(feature, m_zoom))
-                    {
-                        result.push(feature);
-                    }
-                }
-            }
-            data.filterCache[cacheKey] = result;
-            return result;
-        }
-
-        private static function compareInt(a:int, b:int):Number
-        {
-            return a - b;
         }
 
         private function patternOf(layer:StyleLayer, property:String, feature:MvtFeature):BitmapData
@@ -385,68 +287,35 @@ package org.falpi.ags.layers.vectorTiles.render
         // line
         // ------------------------------------------------------------------
 
-        private function drawLineLayer(layer:StyleLayer, data:MvtLayer, k:Number, ox:Number, oy:Number, clip:Boolean):void
+        private function drawLineLayer(b:LayerBucket, k:Number, ox:Number, oy:Number, clip:Boolean):void
         {
-            var pColor:StyleProperty = layer.property("line-color");
-            var pOpacity:StyleProperty = layer.property("line-opacity");
-            var pWidth:StyleProperty = layer.property("line-width");
-            var pGap:StyleProperty = layer.property("line-gap-width");
-            var perFeature:Boolean = pColor.featureDependent || pOpacity.featureDependent || pWidth.featureDependent || pGap.featureDependent;
-            var cap:String = String(layer.value("line-cap", m_zoom));
-            var join:String = String(layer.value("line-join", m_zoom));
-            var caps:String = cap == "round" ? CapsStyle.ROUND : (cap == "square" ? CapsStyle.SQUARE : CapsStyle.NONE);
-            var joints:String = join == "round" ? JointStyle.ROUND : (join == "bevel" ? JointStyle.BEVEL : JointStyle.MITER);
-            var miterLimit:Number = Math.max(1, Number(layer.value("line-miter-limit", m_zoom)));
-            var dashes:Array = layer.has("line-dasharray") ? layer.value("line-dasharray", m_zoom) as Array : null;
-            var translate:Array = layer.value("line-translate", m_zoom) as Array;
-            if (translate != null)
+            if (b.empty)
             {
-                ox += Number(translate[0]);
-                oy += Number(translate[1]);
+                return;
             }
-
-            var color:StyleColor;
-            var opacity:Number = 1;
-            var width:Number = 1;
-            var groupAlpha:Number = 1;
-            if (!perFeature)
+            ox += b.translateX;
+            oy += b.translateY;
+            var width:Number = b.lineWidth;
+            if (!b.perFeature)
             {
-                color = pColor.evaluate(m_zoom) as StyleColor;
-                opacity = pOpacity.evaluate(m_zoom);
-                width = lineWidth(pWidth.evaluate(m_zoom), pGap.evaluate(m_zoom));
-                if (color == null || opacity <= 0 || color.a <= 0 || width <= 0)
-                {
-                    return;
-                }
-                if (opacity < 1)
+                if (b.groupAlpha < 1)
                 {
                     flush(1);
-                    groupAlpha = opacity;
-                    opacity = 1;
                 }
-                m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
+                m_g.lineStyle(width, b.lineRgb, b.lineAlpha, false, LineScaleMode.NORMAL, b.caps, b.joints, b.miterLimit);
             }
 
+            var dashes:Array = b.dashes;
             var pad:Number = 2;
-            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
+            var features:Vector.<MvtFeature> = b.features;
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
             {
                 var feature:MvtFeature = features[i];
-                if (feature.type == MvtFeature.POINT)
+                if (b.perFeature)
                 {
-                    continue;
-                }
-                if (perFeature)
-                {
-                    color = pColor.evaluate(m_zoom, feature) as StyleColor;
-                    opacity = pOpacity.evaluate(m_zoom, feature);
-                    width = lineWidth(pWidth.evaluate(m_zoom, feature), pGap.evaluate(m_zoom, feature));
-                    if (color == null || opacity <= 0 || color.a <= 0 || width <= 0)
-                    {
-                        continue;
-                    }
-                    m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
+                    width = b.lineWidths[i];
+                    m_g.lineStyle(width, b.lineRgbs[i], b.lineAlphas[i], false, LineScaleMode.NORMAL, b.caps, b.joints, b.miterLimit);
                 }
                 var parts:Array = feature.loadGeometry();
                 if (clip && !intersectsTile(parts, k, ox, oy, width + pad))
@@ -463,16 +332,10 @@ package org.falpi.ags.layers.vectorTiles.render
                 }
             }
             m_g.lineStyle();
-            if (groupAlpha < 1)
+            if (b.groupAlpha < 1)
             {
-                flush(groupAlpha);
+                flush(b.groupAlpha);
             }
-        }
-
-        private static function lineWidth(width:Number, gap:Number):Number
-        {
-            // line-gap-width (a line drawn as two parallel casings) is approximated by a single line
-            return gap > 0 ? gap + width * 2 : width;
         }
 
         private function drawParts(parts:Array, k:Number, ox:Number, oy:Number):void
@@ -619,30 +482,21 @@ package org.falpi.ags.layers.vectorTiles.render
         // circle
         // ------------------------------------------------------------------
 
-        private function drawCircleLayer(layer:StyleLayer, data:MvtLayer, k:Number, ox:Number, oy:Number):void
+        private function drawCircleLayer(b:LayerBucket, k:Number, ox:Number, oy:Number):void
         {
-            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
+            var features:Vector.<MvtFeature> = b.features;
             for (var i:int = 0; i < features.length; i++)
             {
-                var feature:MvtFeature = features[i];
-                if (feature.type != MvtFeature.POINT)
+                var radius:Number = b.radii[i];
+                if (b.strokeWidths[i] > 0)
                 {
-                    continue;
-                }
-                var radius:Number = layer.value("circle-radius", m_zoom, feature);
-                var color:StyleColor = layer.value("circle-color", m_zoom, feature) as StyleColor;
-                var opacity:Number = layer.value("circle-opacity", m_zoom, feature);
-                var strokeWidth:Number = layer.value("circle-stroke-width", m_zoom, feature);
-                if (strokeWidth > 0)
-                {
-                    var stroke:StyleColor = layer.value("circle-stroke-color", m_zoom, feature) as StyleColor;
-                    m_g.lineStyle(strokeWidth, stroke.rgb, stroke.a * Number(layer.value("circle-stroke-opacity", m_zoom, feature)));
+                    m_g.lineStyle(b.strokeWidths[i], b.strokeRgbs[i], b.strokeAlphas[i]);
                 }
                 else
                 {
                     m_g.lineStyle();
                 }
-                var parts:Array = feature.loadGeometry();
+                var parts:Array = features[i].loadGeometry();
                 for (var p:int = 0; p < parts.length; p++)
                 {
                     var x:Number = parts[p][0] * k + ox;
@@ -651,7 +505,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     {
                         continue;
                     }
-                    m_g.beginFill(color.rgb, color.a * opacity);
+                    m_g.beginFill(b.circleRgbs[i], b.circleAlphas[i]);
                     m_g.drawCircle(x, y, radius);
                     m_g.endFill();
                     m_vertices += 8;
@@ -674,7 +528,7 @@ package org.falpi.ags.layers.vectorTiles.render
             var placement:String = String(layer.value("symbol-placement", m_zoom));
             var alongLine:Boolean = placement == "line" || placement == "line-center";
             var size:Number = m_size;
-            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
+            var features:Vector.<MvtFeature> = BucketBuilder.filteredFeatures(layer, data, m_zoom);
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
             {
