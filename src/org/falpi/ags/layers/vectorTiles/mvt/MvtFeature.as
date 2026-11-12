@@ -18,6 +18,11 @@ package org.falpi.ags.layers.vectorTiles.mvt
         public var type:uint = UNKNOWN;
         public var extent:uint;
         public var properties:Object = {};
+        /** Bounding box of the geometry in tile extent units (valid after loadGeometry). */
+        public var minX:Number = 0;
+        public var minY:Number = 0;
+        public var maxX:Number = 0;
+        public var maxY:Number = 0;
 
         private var m_bytes:ByteArray;
         private var m_geometryStart:int = -1;
@@ -89,6 +94,10 @@ package org.falpi.ags.layers.vectorTiles.mvt
             var y:int = 0;
             var part:Vector.<Number> = null;
             var n:uint = 0;
+            var x0:int = int.MAX_VALUE;
+            var y0:int = int.MAX_VALUE;
+            var x1:int = int.MIN_VALUE;
+            var y1:int = int.MIN_VALUE;
             while (pbf.pos < end)
             {
                 if (count == 0)
@@ -116,6 +125,10 @@ package org.falpi.ags.layers.vectorTiles.mvt
                     {
                         part[n++] = x;
                         part[n++] = y;
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
                     }
                 }
                 else if (cmd == 7)
@@ -134,6 +147,13 @@ package org.falpi.ags.layers.vectorTiles.mvt
                 {
                     throw new Error("MVT: unknown geometry command " + cmd);
                 }
+            }
+            if (x0 <= x1)
+            {
+                minX = x0;
+                minY = y0;
+                maxX = x1;
+                maxY = y1;
             }
             return parts;
         }

@@ -26,10 +26,16 @@ package org.falpi.ags.layers
 
     import flash.display.Bitmap;
     import flash.display.BitmapData;
+    import flash.display.DisplayObject;
     import flash.display.Sprite;
     import flash.events.Event;
+    import flash.geom.Point;
     import flash.geom.Rectangle;
     import flash.net.URLRequest;
+    import flash.system.Capabilities;
+    import flash.text.TextField;
+    import flash.text.TextFieldAutoSize;
+    import flash.text.TextFormat;
     import flash.utils.ByteArray;
     import flash.utils.getTimer;
 
@@ -151,6 +157,14 @@ package org.falpi.ags.layers
         private var m_updatePending:Boolean = false;
         private var m_frameListener:Boolean = false;
         private var m_panListener:Boolean = false;
+        /** getTimer of the last pan or zoom step. */
+        private var m_moveTime:int = -10000;
+        private var m_statStart:int;
+        private var m_statTiles:int;
+        private var m_statPlaceCount:int;
+        private var m_statPlaceMs:int;
+        private var m_statRenderMs:int;
+        private var m_statRenderCount:int;
 
         // ------------------------------------------------------------------
         // public properties
@@ -301,6 +315,101 @@ package org.falpi.ags.layers
 
         /** Maximum number of parallel HTTP requests. */
         public var maxConnections:int = 6;
+
+        /** Diagnostics: where the time of the last completed update went. */
+        public var updateTimings:String = "";
+
+        private var m_diagnostics:Boolean = false;
+        private var m_diagnosticsText:TextField;
+        private var m_diagnosticsFrames:int = 0;
+        private var m_diagnosticsTime:int = 0;
+        private var m_diagnosticsWorst:int = 0;
+        private var m_diagnosticsLast:int = 0;
+
+        /**
+         * Shows a box at the top left of the map with the player, the real frame rate and where the time
+         * of the last update went (to report performance problems).
+         */
+        public function get diagnostics():Boolean
+        {
+            return m_diagnostics;
+        }
+
+        public function set diagnostics(value:Boolean):void
+        {
+            if (m_diagnostics == value)
+            {
+                return;
+            }
+            m_diagnostics = value;
+            if (value)
+            {
+                addEventListener(Event.ENTER_FRAME, diagnosticsFrame);
+            }
+            else
+            {
+                removeEventListener(Event.ENTER_FRAME, diagnosticsFrame);
+                if (m_diagnosticsText != null && m_diagnosticsText.parent != null)
+                {
+                    m_diagnosticsText.parent.removeChild(m_diagnosticsText);
+                }
+                m_diagnosticsText = null;
+            }
+        }
+
+        private function diagnosticsFrame(event:Event):void
+        {
+            var now:int = getTimer();
+            if (m_diagnosticsLast > 0 && now - m_diagnosticsLast > m_diagnosticsWorst)
+            {
+                m_diagnosticsWorst = now - m_diagnosticsLast;
+            }
+            m_diagnosticsLast = now;
+            m_diagnosticsFrames++;
+            if (stage == null || map == null || now - m_diagnosticsTime < 1000)
+            {
+                return;
+            }
+            if (m_diagnosticsText == null)
+            {
+                m_diagnosticsText = new TextField();
+                m_diagnosticsText.autoSize = TextFieldAutoSize.LEFT;
+                m_diagnosticsText.background = true;
+                m_diagnosticsText.backgroundColor = 0xFFFFE0;
+                m_diagnosticsText.border = true;
+                m_diagnosticsText.selectable = true;
+                m_diagnosticsText.defaultTextFormat = new TextFormat("_sans", 11, 0x000000);
+                stage.addChild(m_diagnosticsText);
+            }
+            var fps:Number = m_diagnosticsFrames * 1000 / (now - m_diagnosticsTime);
+            var loading:int = 0;
+            var total:int = 0;
+            for each (var tile:Object in m_tiles)
+            {
+                total++;
+                if (tile.needed && tile.state != DONE)
+                {
+                    loading++;
+                }
+            }
+            var onScreen:Boolean = visible;
+            for (var d:DisplayObject = this; onScreen && d != null && d != stage; d = d.parent)
+            {
+                onScreen = d.visible;
+            }
+            var topLeft:Point = map.localToGlobal(new Point(0, 0));
+            m_diagnosticsText.x = topLeft.x + 60;
+            m_diagnosticsText.y = topLeft.y + 8;
+            m_diagnosticsText.visible = onScreen;
+            m_diagnosticsText.text = "VectorTileLayer " + id + " | " + Capabilities.playerType + " " + Capabilities.version +
+                (Capabilities.isDebugger ? " debugger" : "") + "\n" +
+                "fps " + fps.toFixed(0) + " (stage " + stage.frameRate + "), worst frame " + m_diagnosticsWorst + " ms | level " +
+                map.level + ", tiles " + total + " (" + loading + " loading), queue " + m_renderQueue.length + "\n" +
+                "last update: " + updateTimings;
+            m_diagnosticsFrames = 0;
+            m_diagnosticsTime = now;
+            m_diagnosticsWorst = 0;
+        }
 
         /** The parsed style in use (null until the layer is loaded). */
         public function get styleDefinition():Style
@@ -585,11 +694,38 @@ package org.falpi.ags.layers
 
         override protected function zoomStartHandler(event:ZoomEvent):void
         {
-            // the base implementations snapshot / rescale image tiles; we scale our own content
+            // the base implementations snapshot / rescale image tiles; we scale our own content.
+            // When zoom steps follow each other the map does not update the layer in between: the tiles
+            // are still laid out for an older extent, while the new animation is relative to the current
+            // one. Lay them out again first, or they would jump back to their old size at every step
+            rebase();
+        }
+
+        /** Lays out the existing tiles (kept as placeholders) and the labels for the current map extent. */
+        private function rebase():void
+        {
+            if (m_definition == null || map == null || !m_hasView)
+            {
+                return;
+            }
+            m_content.x = 0;
+            m_content.y = 0;
+            m_content.scaleX = 1;
+            m_content.scaleY = 1;
+            if (!computeView())
+            {
+                return;
+            }
+            for each (var tile:Object in m_tiles)
+            {
+                positionTile(tile);
+            }
+            positionLabels();
         }
 
         override protected function zoomUpdateHandler(event:ZoomEvent):void
         {
+            m_moveTime = getTimer();
             var scrollRect:Rectangle = viewportScrollRect();
             var width:Number = Number(internalValue(event, "width"));
             var x:Number = Number(internalValue(event, "x"));
@@ -617,6 +753,12 @@ package org.falpi.ags.layers
                 return;
             }
             m_updatePending = true;
+            m_statStart = getTimer();
+            m_statTiles = -1;
+            m_statPlaceCount = 0;
+            m_statPlaceMs = 0;
+            m_statRenderMs = 0;
+            m_statRenderCount = 0;
             m_content.x = 0;
             m_content.y = 0;
             m_content.scaleX = 1;
@@ -672,6 +814,7 @@ package org.falpi.ags.layers
 
         private function panUpdate(event:PanEvent):void
         {
+            m_moveTime = getTimer();
             if (m_definition == null || !m_hasView || !visible)
             {
                 return;
@@ -1031,7 +1174,12 @@ package org.falpi.ags.layers
             }
             var start:int = getTimer();
             var rendered:Boolean = false;
-            while (m_renderQueue.length > 0 && getTimer() - start < FRAME_BUDGET_MS)
+            // while the user moves the map: under half of the frame interval, to keep pan and zoom smooth;
+            // otherwise most of it, to finish sooner (the frame rate drops a little only while loading)
+            var interval:Number = stage != null ? 1000 / stage.frameRate : 40;
+            var budget:int = start - m_moveTime < 600 ? Math.max(4, interval * 0.45)
+                                                      : Math.max(FRAME_BUDGET_MS, Math.min(40, interval * 0.8));
+            while (m_renderQueue.length > 0 && getTimer() - start < budget)
             {
                 var tile:Object = nextQueuedTile();
                 if (tile == null)
@@ -1049,7 +1197,7 @@ package org.falpi.ags.layers
             else if (m_labelsDirty && m_renderQueue.length == 0)
             {
                 // wait for a quiet moment: placing labels while tiles keep arriving would be wasted work
-                if (!hasLoadingTiles() || getTimer() - m_labelsTime > 700)
+                if (!hasLoadingTiles() || getTimer() - m_labelsTime > 1500)
                 {
                     placeLabels();
                 }
@@ -1100,6 +1248,7 @@ package org.falpi.ags.layers
             var size:int = tile.size;
             var data:BitmapData = new BitmapData(size, size, true, 0);
             var symbols:Vector.<SymbolCandidate> = new Vector.<SymbolCandidate>();
+            var renderStart:int = getTimer();
             try
             {
                 m_renderer.render(data, size, tile.zoom, tile.sources, tile.x * size, tile.y * size, symbols);
@@ -1108,6 +1257,8 @@ package org.falpi.ags.layers
             {
                 // a broken tile must not stop the others
             }
+            m_statRenderMs += getTimer() - renderStart;
+            m_statRenderCount++;
             tile.symbols = symbols;
             var bitmap:Bitmap = new Bitmap(data);
             tile.bitmap = bitmap;
@@ -1135,6 +1286,10 @@ package org.falpi.ags.layers
             {
                 return;
             }
+            if (m_statTiles < 0)
+            {
+                m_statTiles = getTimer() - m_statStart;
+            }
             for each (var tile:Object in m_tiles)
             {
                 if (!tile.needed)
@@ -1152,6 +1307,9 @@ package org.falpi.ags.layers
         {
             if (m_updatePending)
             {
+                updateTimings = "tiles " + m_statTiles + " ms (drawing " + m_statRenderMs + " ms in " + m_statRenderCount +
+                    " tiles), labels placed " + m_statPlaceCount + "x in " + m_statPlaceMs + " ms, total " +
+                    (getTimer() - m_statStart) + " ms";
                 m_updatePending = false;
                 dispatchEvent(new LayerEvent(LayerEvent.UPDATE_END, this, null, true));
             }
@@ -1214,6 +1372,7 @@ package org.falpi.ags.layers
                 }
             }
             var overlay:BitmapData = new BitmapData(width, height, true, 0);
+            var placeStart:int = getTimer();
             try
             {
                 m_placer.place(overlay, m_zoom, list);
@@ -1221,6 +1380,8 @@ package org.falpi.ags.layers
             catch (error:Error)
             {
             }
+            m_statPlaceCount++;
+            m_statPlaceMs += getTimer() - placeStart;
             var previous:BitmapData = m_labelBitmap.bitmapData;
             m_labelBitmap.bitmapData = overlay;
             m_labelBitmap.x = originX;

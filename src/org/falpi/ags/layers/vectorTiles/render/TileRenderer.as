@@ -254,7 +254,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     matrix = pattern != null ? patternMatrix(pattern) : null;
                 }
                 var parts:Array = feature.loadGeometry();
-                if (clip && !intersectsTile(parts, k, ox, oy, 2))
+                if (clip && (outsideTile(feature, k, ox, oy, 2) || !intersectsTile(parts, k, ox, oy, 2)))
                 {
                     continue;
                 }
@@ -387,6 +387,11 @@ package org.falpi.ags.layers.vectorTiles.render
 
         private function drawLineLayer(layer:StyleLayer, data:MvtLayer, k:Number, ox:Number, oy:Number, clip:Boolean):void
         {
+            if (layer.has("line-pattern"))
+            {
+                drawLinePatternLayer(layer, data, k, ox, oy, clip);
+                return;
+            }
             var pColor:StyleProperty = layer.property("line-color");
             var pOpacity:StyleProperty = layer.property("line-opacity");
             var pWidth:StyleProperty = layer.property("line-width");
@@ -449,7 +454,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
                 }
                 var parts:Array = feature.loadGeometry();
-                if (clip && !intersectsTile(parts, k, ox, oy, width + pad))
+                if (clip && (outsideTile(feature, k, ox, oy, width + pad) || !intersectsTile(parts, k, ox, oy, width + pad)))
                 {
                     continue;
                 }
@@ -463,6 +468,117 @@ package org.falpi.ags.layers.vectorTiles.render
                 }
             }
             m_g.lineStyle();
+            if (groupAlpha < 1)
+            {
+                flush(groupAlpha);
+            }
+        }
+
+        /**
+         * Lines drawn with an image repeated along them (line-pattern): the image is scaled so that its
+         * height is the line width and laid segment by segment, rotated to follow the line. Joins are not
+         * rounded. Without the image (sprite missing) nothing is drawn: a line of the full width in the
+         * default color would be a blot, the pattern being usually a thin drawing on a transparent ground.
+         */
+        private function drawLinePatternLayer(layer:StyleLayer, data:MvtLayer, k:Number, ox:Number, oy:Number, clip:Boolean):void
+        {
+            if (sprites == null)
+            {
+                return;
+            }
+            var pWidth:StyleProperty = layer.property("line-width");
+            var pOpacity:StyleProperty = layer.property("line-opacity");
+            var translate:Array = layer.value("line-translate", m_zoom) as Array;
+            if (translate != null)
+            {
+                ox += Number(translate[0]);
+                oy += Number(translate[1]);
+            }
+            // bitmap fills have no alpha: the layer is drawn on its own and blended once
+            var groupAlpha:Number = pOpacity.featureDependent ? 1 : Number(pOpacity.evaluate(m_zoom));
+            if (!(groupAlpha > 0))
+            {
+                return;
+            }
+            if (groupAlpha < 1)
+            {
+                flush(1);
+            }
+            var g:Graphics = m_g;
+            var matrix:Matrix = new Matrix();
+            var limit:Number = m_size;
+            g.lineStyle();
+            var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
+            var count:int = features.length;
+            for (var i:int = 0; i < count; i++)
+            {
+                var feature:MvtFeature = features[i];
+                if (feature.type == MvtFeature.POINT)
+                {
+                    continue;
+                }
+                var pattern:BitmapData = patternOf(layer, "line-pattern", feature);
+                var width:Number = Number(pWidth.evaluate(m_zoom, feature));
+                if (pattern == null || !(width > 0) || pattern.height == 0)
+                {
+                    continue;
+                }
+                var parts:Array = feature.loadGeometry();
+                if (clip && (outsideTile(feature, k, ox, oy, width) || !intersectsTile(parts, k, ox, oy, width)))
+                {
+                    continue;
+                }
+                var scale:Number = width / pattern.height;
+                var period:Number = pattern.width * scale;
+                var half:Number = width / 2;
+                var pad:Number = half + 2;
+                for (var p:int = 0; p < parts.length; p++)
+                {
+                    var part:Vector.<Number> = parts[p];
+                    var n:int = part.length;
+                    if (n < 4)
+                    {
+                        continue;
+                    }
+                    var distance:Number = 0;
+                    var x0:Number = part[0] * k + ox;
+                    var y0:Number = part[1] * k + oy;
+                    for (var j:int = 2; j < n; j += 2)
+                    {
+                        var x1:Number = part[j] * k + ox;
+                        var y1:Number = part[int(j + 1)] * k + oy;
+                        var dx:Number = x1 - x0;
+                        var dy:Number = y1 - y0;
+                        var length:Number = Math.sqrt(dx * dx + dy * dy);
+                        if (length > 0)
+                        {
+                            var outside:Boolean = (x0 < -pad && x1 < -pad) || (y0 < -pad && y1 < -pad) ||
+                                (x0 > limit + pad && x1 > limit + pad) || (y0 > limit + pad && y1 > limit + pad);
+                            if (!outside)
+                            {
+                                var nx:Number = -dy / length * half;
+                                var ny:Number = dx / length * half;
+                                // image space -> tile: the image point (distance along, middle) goes to the start
+                                matrix.identity();
+                                matrix.translate(-(distance % period) / scale, -pattern.height / 2);
+                                matrix.scale(scale, scale);
+                                matrix.rotate(Math.atan2(dy, dx));
+                                matrix.translate(x0, y0);
+                                g.beginBitmapFill(pattern, matrix, true, true);
+                                g.moveTo(x0 + nx, y0 + ny);
+                                g.lineTo(x1 + nx, y1 + ny);
+                                g.lineTo(x1 - nx, y1 - ny);
+                                g.lineTo(x0 - nx, y0 - ny);
+                                g.endFill();
+                                m_vertices += 4;
+                            }
+                            distance += length;
+                        }
+                        x0 = x1;
+                        y0 = y1;
+                    }
+                }
+            }
             if (groupAlpha < 1)
             {
                 flush(groupAlpha);
@@ -583,6 +699,16 @@ package org.falpi.ags.layers.vectorTiles.render
             }
         }
 
+        /**
+         * True when the bounding box of the whole feature misses the tile (pad in pixels): one comparison
+         * instead of a walk through the geometry. Overzoomed tiles discard most features this way.
+         */
+        private function outsideTile(feature:MvtFeature, k:Number, ox:Number, oy:Number, pad:Number):Boolean
+        {
+            return feature.maxX * k + ox < -pad || feature.minX * k + ox > m_size + pad ||
+                   feature.maxY * k + oy < -pad || feature.minY * k + oy > m_size + pad;
+        }
+
         /** Cheap bounding box test used when overzooming (most of the data tile is off screen). */
         private function intersectsTile(parts:Array, k:Number, ox:Number, oy:Number, pad:Number):Boolean
         {
@@ -686,6 +812,10 @@ package org.falpi.ags.layers.vectorTiles.render
                 var y:Number;
                 if (alongLine && feature.type != MvtFeature.POINT)
                 {
+                    if (outsideTile(feature, k, ox, oy, 0))
+                    {
+                        continue;
+                    }
                     var lines:Array = null;
                     for (p = 0; p < parts.length; p++)
                     {
