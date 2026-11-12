@@ -26,8 +26,22 @@ package org.falpi.ags.layers.vectorTiles.gpu
          * @param holeIndices index (in vertices, not in numbers) where each hole starts, or null
          * @return vertex indices, three per triangle
          */
+        /**
+         * Diagonal tests left for the last resort of the current triangulation (splitting the polygon:
+         * each test walks the whole ring, and degenerate input needs a quadratic number of them). When they
+         * run out the polygon is left partly untriangulated instead of blocking the player for seconds.
+         */
+        private static var s_splitBudget:int;
+        /** Diagnostics: polygons left partly untriangulated because the budget ran out. */
+        public static var incomplete:int = 0;
+        /** True when the last triangulation ran out of budget (its result is partial). */
+        public static var lastIncomplete:Boolean = false;
+
         public static function triangulate(data:Vector.<Number>, holeIndices:Vector.<int> = null):Vector.<int>
         {
+            // a few hundred thousand vertex visits at most (milliseconds, not seconds)
+            s_splitBudget = Math.max(48, 4e5 / (data.length + 1));
+            lastIncomplete = false;
             var hasHoles:Boolean = holeIndices != null && holeIndices.length > 0;
             var outerLen:int = hasHoles ? holeIndices[0] * 2 : data.length;
             var outerNode:EarNode = linkedList(data, 0, outerLen, true);
@@ -285,6 +299,15 @@ package org.falpi.ags.layers.vectorTiles.gpu
                 var b:EarNode = a.next.next;
                 while (b != a.prev)
                 {
+                    if (--s_splitBudget < 0)
+                    {
+                        if (!lastIncomplete)
+                        {
+                            lastIncomplete = true;
+                            incomplete++;
+                        }
+                        return;
+                    }
                     if (a.i != b.i && isValidDiagonal(a, b))
                     {
                         var c:EarNode = splitPolygon(a, b);

@@ -95,6 +95,10 @@ package org.falpi.ags.layers
         private static const LOADING:int = 0;
         private static const QUEUED:int = 1;
         private static const DONE:int = 2;
+        /** Drawn by the CPU, waiting for its GPU meshes. */
+        private static const MESHING:int = 3;
+        /** Stands for the bitmap of tiles with nothing drawn by the CPU (GPU mode). */
+        private static const EMPTY_TILE:BitmapData = new BitmapData(1, 1, true, 0);
 
         public function VectorTileLayer(url:String = null, proxyURL:String = null, token:String = null)
         {
@@ -178,6 +182,11 @@ package org.falpi.ags.layers
         private var m_gpuFrameListener:Boolean = false;
         /** tile bitmap -> tile entry, to find the GPU fills of the bitmaps in display order. */
         private var m_bitmapTiles:Dictionary = new Dictionary(true);
+        private var m_meshQueue:Array = [];
+        private var m_gpuEntries:Array = [];
+        private var m_boosted:Boolean = false;
+        private var m_boostTime:int = 0;
+        private var m_savedFrameRate:Number = 24;
 
         // ------------------------------------------------------------------
         // public properties
@@ -359,6 +368,18 @@ package org.falpi.ags.layers
         public function get gpuActive():Boolean
         {
             return m_gpu != null && m_gpu.available;
+        }
+
+        /**
+         * Frame rate of the stage while the map is panned or zoomed in GPU mode (restored when it stops);
+         * 0 leaves the frame rate of the application alone.
+         */
+        public var interactiveFrameRate:int = 60;
+
+        /** Meshes, GPU memory and frames drawn by the GPU renderer (diagnostics). */
+        public function get gpuStats():String
+        {
+            return m_gpu != null ? m_gpu.stats : "";
         }
 
         [Bindable("gpuActiveChange")]
@@ -656,6 +677,7 @@ package org.falpi.ags.layers
 
         override protected function zoomUpdateHandler(event:ZoomEvent):void
         {
+            boostFrameRate();
             var scrollRect:Rectangle = viewportScrollRect();
             var width:Number = Number(internalValue(event, "width"));
             var x:Number = Number(internalValue(event, "x"));
@@ -738,6 +760,7 @@ package org.falpi.ags.layers
 
         private function panUpdate(event:PanEvent):void
         {
+            boostFrameRate();
             if (m_definition == null || !m_hasView || !visible)
             {
                 return;
@@ -1014,7 +1037,10 @@ package org.falpi.ags.layers
                     bitmap.parent.removeChild(bitmap);
                 }
                 delete m_bitmapTiles[bitmap];
-                bitmap.bitmapData.dispose();
+                if (bitmap.bitmapData != EMPTY_TILE)
+                {
+                    bitmap.bitmapData.dispose();
+                }
                 tile.bitmap = null;
             }
             // cancel the downloads nobody else waits for
@@ -1042,7 +1068,7 @@ package org.falpi.ags.layers
             }
             tile.sources = null;
             tile.symbols = null;
-            tile.gpuFills = null;
+            tile.gpuGroups = null;
             tile.state = -1;
         }
 
@@ -1054,6 +1080,7 @@ package org.falpi.ags.layers
             }
             m_tiles = {};
             m_renderQueue = [];
+            m_meshQueue = [];
             m_tileZoom = -1;
             if (m_labelBitmap.bitmapData != null)
             {
@@ -1098,23 +1125,52 @@ package org.falpi.ags.layers
                 return;
             }
             var start:int = getTimer();
+            // at most about half of the frame interval, so that pan and zoom stay smooth
+            var budget:int = stage != null ? Math.min(FRAME_BUDGET_MS, Math.max(4, 450 / stage.frameRate)) : FRAME_BUDGET_MS;
+            var deadline:int = start + budget;
             var rendered:Boolean = false;
-            while (m_renderQueue.length > 0 && getTimer() - start < FRAME_BUDGET_MS)
+            var tile:Object;
+            // GPU meshes of the tiles already drawn by the CPU, one tile at a time
+            while (m_meshQueue.length > 0 && getTimer() < deadline)
             {
-                var tile:Object = nextQueuedTile();
+                tile = m_meshQueue[0];
+                if (m_tiles[tile.key] != tile || tile.state != MESHING)
+                {
+                    m_meshQueue.shift();
+                    continue;
+                }
+                var ready:Boolean = true;
+                try
+                {
+                    ready = m_gpu == null || m_gpu.prepare(tile.gpuGroups, tile.zoom, deadline);
+                }
+                catch (error:Error)
+                {
+                }
+                if (!ready)
+                {
+                    break;
+                }
+                m_meshQueue.shift();
+                showTile(tile);
+                rendered = true;
+            }
+            while (m_renderQueue.length > 0 && getTimer() < deadline)
+            {
+                tile = nextQueuedTile();
                 if (tile == null)
                 {
                     break;
                 }
                 renderTile(tile);
-                rendered = true;
+                rendered = rendered || tile.state == DONE;
             }
             if (rendered)
             {
                 m_labelsDirty = true;
                 checkComplete();
             }
-            else if (m_labelsDirty && m_renderQueue.length == 0)
+            else if (m_labelsDirty && m_renderQueue.length == 0 && m_meshQueue.length == 0)
             {
                 // wait for a quiet moment: placing labels while tiles keep arriving would be wasted work
                 if (!hasLoadingTiles() || getTimer() - m_labelsTime > 700)
@@ -1122,7 +1178,7 @@ package org.falpi.ags.layers
                     placeLabels();
                 }
             }
-            if (m_renderQueue.length == 0 && !m_labelsDirty && !hasLoadingTiles())
+            if (m_renderQueue.length == 0 && m_meshQueue.length == 0 && !m_labelsDirty && !hasLoadingTiles())
             {
                 stopFrames();
             }
@@ -1179,23 +1235,31 @@ package org.falpi.ags.layers
             }
             tile.symbols = symbols;
             var bitmap:Bitmap = new Bitmap(data);
-            tile.bitmap = bitmap;
-            tile.gpuFills = gpuFills;
-            m_bitmapTiles[bitmap] = tile;
-            if (gpuFills != null && gpuFills.length > 0)
+            if (gpuFills != null && m_renderer.drawCalls == 0)
             {
-                // triangulate and upload now (inside the frame budget), not when the frame is drawn
-                m_gpu.sprites = m_sprites;
-                try
-                {
-                    m_gpu.prepareTile(gpuFills, tile.zoom);
-                }
-                catch (error:Error)
-                {
-                }
+                // everything is on the GPU: no need to keep (and composite) an empty bitmap
+                data.dispose();
+                bitmap.bitmapData = EMPTY_TILE;
+                bitmap.visible = false;
             }
+            tile.bitmap = bitmap;
+            m_bitmapTiles[bitmap] = tile;
+            if (gpuFills != null && gpuFills.length > 0 && m_gpu != null)
+            {
+                // the meshes are built over the next frames; the tile is shown when they are ready
+                m_gpu.sprites = m_sprites;
+                tile.gpuGroups = GpuRenderer.groups(gpuFills);
+                tile.state = MESHING;
+                m_meshQueue.push(tile);
+                return;
+            }
+            showTile(tile);
+        }
+
+        private function showTile(tile:Object):void
+        {
             tile.state = DONE;
-            m_tileContainer.addChild(bitmap);
+            m_tileContainer.addChild(tile.bitmap);
             positionTile(tile);
         }
 
@@ -1282,6 +1346,7 @@ package org.falpi.ags.layers
                 m_gpuFrameListener = false;
                 removeEventListener(Event.ENTER_FRAME, gpuFrame);
             }
+            restoreFrameRate();
             if (m_gpu != null)
             {
                 m_gpu.dispose();
@@ -1332,44 +1397,98 @@ package org.falpi.ags.layers
             dispatchEvent(new Event("gpuActiveChange"));
         }
 
-        /** Draws the GPU part of the visible tiles, every frame (follows pan and zoom animations). */
+        /** Draws the GPU part of the visible tiles (follows pan and zoom animations frame by frame). */
         private function gpuFrame(event:Event):void
         {
-            if (m_gpu == null || map == null || !isOnScreen())
+            if (m_gpu == null)
             {
-                if (m_gpu != null)
+                return;
+            }
+            try
+            {
+                if (m_boosted && getTimer() - m_boostTime > 800)
+                {
+                    restoreFrameRate();
+                }
+                if (map == null || !isOnScreen())
                 {
                     m_gpu.hide();
+                    return;
                 }
-                return;
-            }
-            var topLeft:Point = map.localToGlobal(new Point(0, 0));
-            var bottomRight:Point = map.localToGlobal(new Point(map.width, map.height));
-            var view:Rectangle = new Rectangle(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
-            var background:StyleColor = m_renderer != null ? m_renderer.backgroundColor(m_zoom) : null;
-            // effective opacity, including the native alpha set by hosts (e.g. a custom alpha setter)
-            var opacity:Number = transform.concatenatedColorTransform.alphaMultiplier;
-            m_gpu.sprites = m_sprites;
-            if (!m_gpu.beginFrame(view, background, opacity))
-            {
-                return;
-            }
-            var origin:Point = new Point(0, 0);
-            for (var i:int = 0; i < m_tileContainer.numChildren; i++)
-            {
-                var bitmap:Bitmap = m_tileContainer.getChildAt(i) as Bitmap;
-                var tile:Object = bitmap != null ? m_bitmapTiles[bitmap] : null;
-                if (tile == null || tile.gpuFills == null || tile.gpuFills.length == 0 || bitmap.bitmapData == null)
+                m_point.x = 0;
+                m_point.y = 0;
+                var topLeft:Point = map.localToGlobal(m_point);
+                m_point.x = map.width;
+                m_point.y = map.height;
+                var bottomRight:Point = map.localToGlobal(m_point);
+                var count:int = 0;
+                var children:int = m_tileContainer.numChildren;
+                for (var i:int = 0; i < children; i++)
                 {
-                    continue;
+                    var bitmap:Bitmap = m_tileContainer.getChildAt(i) as Bitmap;
+                    var tile:Object = bitmap != null ? m_bitmapTiles[bitmap] : null;
+                    if (tile == null || tile.gpuGroups == null || bitmap.bitmapData == null)
+                    {
+                        continue;
+                    }
+                    m_point.x = 0;
+                    m_point.y = 0;
+                    var p0:Point = bitmap.localToGlobal(m_point);
+                    m_point.x = bitmap.bitmapData.width;
+                    m_point.y = bitmap.bitmapData.height;
+                    var p1:Point = bitmap.localToGlobal(m_point);
+                    var entry:Object = count < m_gpuEntries.length ? m_gpuEntries[count] : (m_gpuEntries[count] = {});
+                    entry.groups = tile.gpuGroups;
+                    entry.zoom = tile.zoom;
+                    entry.size = tile.size;
+                    entry.x = p0.x;
+                    entry.y = p0.y;
+                    entry.width = p1.x - p0.x;
+                    entry.height = p1.y - p0.y;
+                    entry.scale = (p1.x - p0.x) / tile.size;
+                    count++;
                 }
-                var p0:Point = bitmap.localToGlobal(origin);
-                var p1:Point = bitmap.localToGlobal(new Point(bitmap.bitmapData.width, bitmap.bitmapData.height));
-                var stageScale:Number = (p1.x - p0.x) / tile.size;
-                var clip:Rectangle = new Rectangle(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
-                m_gpu.drawTile(tile.gpuFills, tile.zoom, tile.size, p0.x, p0.y, stageScale, clip);
+                var background:StyleColor = m_renderer != null ? m_renderer.backgroundColor(m_zoom) : null;
+                // effective opacity, including the native alpha set by hosts (e.g. a custom alpha setter)
+                var opacity:Number = transform.concatenatedColorTransform.alphaMultiplier;
+                m_gpu.sprites = m_sprites;
+                m_gpu.render(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y, background,
+                             opacity, m_gpuEntries, count);
             }
-            m_gpu.endFrame();
+            catch (error:Error)
+            {
+                // a failed frame must not stop the next ones
+            }
+        }
+
+        private var m_point:Point = new Point();
+
+        /** Raises the frame rate of the stage while the user moves the map (GPU mode only). */
+        private function boostFrameRate():void
+        {
+            if (m_gpu == null || !m_gpu.available || interactiveFrameRate <= 0 || stage == null)
+            {
+                return;
+            }
+            m_boostTime = getTimer();
+            if (!m_boosted && stage.frameRate < interactiveFrameRate)
+            {
+                m_savedFrameRate = stage.frameRate;
+                stage.frameRate = interactiveFrameRate;
+                m_boosted = true;
+            }
+        }
+
+        private function restoreFrameRate():void
+        {
+            if (m_boosted)
+            {
+                m_boosted = false;
+                if (stage != null && stage.frameRate == interactiveFrameRate)
+                {
+                    stage.frameRate = m_savedFrameRate;
+                }
+            }
         }
 
         /**

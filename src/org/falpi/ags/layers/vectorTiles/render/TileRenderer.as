@@ -24,6 +24,8 @@ package org.falpi.ags.layers.vectorTiles.render
 
         public var style:Style;
         public var sprites:SpriteAtlas;
+        /** Number of times the last render() actually drew into the target (0 = target untouched). */
+        public var drawCalls:int = 0;
 
         private var m_shape:Shape = new Shape();
         private var m_g:Graphics;
@@ -63,6 +65,7 @@ package org.falpi.ags.layers.vectorTiles.render
             m_worldX = worldX;
             m_worldY = worldY;
             m_vertices = 0;
+            drawCalls = 0;
             m_g.clear();
             var layers:Vector.<StyleLayer> = style.layers;
             var n:int = layers.length;
@@ -161,6 +164,7 @@ package org.falpi.ags.layers.vectorTiles.render
         {
             if (m_vertices > 0)
             {
+                drawCalls++;
                 if (alpha < 1)
                 {
                     m_target.draw(m_shape, null, new ColorTransform(1, 1, 1, alpha), null, null, true);

@@ -18,6 +18,8 @@ package org.falpi.ags.layers.vectorTiles.mvt
         public var type:uint = UNKNOWN;
         public var extent:uint;
         public var properties:Object = {};
+        /** Free slot for the GPU renderer (triangulation of the feature). */
+        public var gpu:Object;
 
         private var m_bytes:ByteArray;
         private var m_geometryStart:int = -1;
