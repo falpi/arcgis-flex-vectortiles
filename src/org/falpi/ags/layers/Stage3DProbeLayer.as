@@ -4,12 +4,7 @@ package org.falpi.ags.layers
     import com.esri.ags.geometry.Extent;
     import com.esri.ags.layers.WebTiledLayer;
 
-    import flash.display.BitmapData;
     import flash.display.DisplayObject;
-    import flash.utils.getQualifiedClassName;
-
-    import mx.core.UIComponent;
-    import mx.core.mx_internal;
     import flash.display.Stage3D;
     import flash.display3D.Context3D;
     import flash.display3D.Context3DBlendFactor;
@@ -28,7 +23,10 @@ package org.falpi.ags.layers
     import flash.text.TextFormat;
     import flash.utils.ByteArray;
     import flash.utils.Endian;
+    import flash.utils.getQualifiedClassName;
     import flash.utils.getTimer;
+
+    import mx.core.UIComponent;
 
     /**
      * Phase 0 probe (Stage3D feasibility), not part of the public API.
@@ -469,63 +467,57 @@ package org.falpi.ags.layers
          */
         private function coverReport(p:Point):String
         {
-            var chain:Array = [];
-            for (var d:DisplayObject = map; d != null && d != stage; d = d.parent)
-            {
-                chain.push(d);
-            }
-            var hidden:Array = [];
-            var lines:Array = [];
+            // everything drawn at the point outside the map (back to front): candidates for an opaque background.
+            // getObjectsUnderPoint reads no pixels, so it needs no cross-domain policy
+            var lines:Array = ["under the map (back to front):"];
             try
             {
-                for (var i:int = 0; i < chain.length; i++)
+                var objects:Array = stage.getObjectsUnderPoint(p);
+                for each (var o:DisplayObject in objects)
                 {
-                    var o:DisplayObject = chain[i];
-                    setFlashVisible(o, false);
-                    hidden.push(o);
-                    var a:int = alphaAt(p);
-                    lines.push((i == 0 ? "map hidden" : describe(o)) + " -> alpha " + a);
-                    if (a == 0)
+                    if (map.contains(o) || o == m_status || !onScreenChain(o))
                     {
-                        break;
+                        continue;
                     }
+                    lines.push("  " + describe(o) + (o.alpha < 1 ? " alpha=" + o.alpha.toFixed(2) : ""));
+                }
+                if (lines.length == 1)
+                {
+                    lines.push("  nothing");
                 }
             }
             catch (error:Error)
             {
                 lines.push("cover check: " + error.message);
             }
-            for each (o in hidden)
-            {
-                setFlashVisible(o, true);
-            }
             return lines.join("\n");
         }
 
-        private function alphaAt(p:Point):int
+        private function onScreenChain(o:DisplayObject):Boolean
         {
-            var bmp:BitmapData = new BitmapData(1, 1, true, 0);
-            bmp.draw(stage, new Matrix(1, 0, 0, 1, -p.x, -p.y));
-            var a:int = bmp.getPixel32(0, 0) >>> 24;
-            bmp.dispose();
-            return a;
-        }
-
-        private static function setFlashVisible(o:DisplayObject, value:Boolean):void
-        {
-            if (o is UIComponent)
+            for (var d:DisplayObject = o; d != null && d != stage; d = d.parent)
             {
-                UIComponent(o).mx_internal::$visible = value; // no show/hide events
+                if (!d.visible || d.alpha == 0)
+                {
+                    return false;
+                }
             }
-            else
-            {
-                o.visible = value;
-            }
+            return true;
         }
 
         private static function describe(o:DisplayObject):String
         {
             var s:String = getQualifiedClassName(o).replace(/^.*::/, "");
+            if (!(o is UIComponent) && o.parent is UIComponent)
+            {
+                s += " in " + describe(o.parent); // a Shape/graphic of a component
+                return s;
+            }
+            if ("hostComponent" in o && o["hostComponent"] is UIComponent)
+            {
+                s += " of " + describe(o["hostComponent"]); // skin: the styles are the host's
+                return s;
+            }
             if (o is UIComponent)
             {
                 var c:UIComponent = UIComponent(o);
