@@ -4,6 +4,7 @@ package org.falpi.ags.layers
     import com.esri.ags.geometry.Extent;
     import com.esri.ags.layers.WebTiledLayer;
 
+    import flash.display.DisplayObject;
     import flash.display.Stage3D;
     import flash.display3D.Context3D;
     import flash.display3D.Context3DBlendFactor;
@@ -180,6 +181,7 @@ package org.falpi.ags.layers
             }
             if (m_stage3D != null)
             {
+                m_stage3D.visible = false;
                 m_stage3D.removeEventListener(Event.CONTEXT3D_CREATE, contextCreated);
                 m_stage3D.removeEventListener(ErrorEvent.ERROR, contextError);
             }
@@ -271,7 +273,12 @@ package org.falpi.ags.layers
             }
             status("Stage3D " + m_context.driverInfo + " | " + width + "x" + height + " | " + m_fps.toFixed(0) + " fps" +
                    (m_error != null ? "\n" + m_error : ""));
-            if (width < 50 || height < 50 || !visible)
+            // Stage3D is not part of the display list: hide it ourselves when the layer is not on screen
+            // (basemap switched off, map in another tab...), otherwise the last frame stays under the UI
+            var onScreen:Boolean = width >= 50 && height >= 50 && isOnScreen();
+            m_stage3D.visible = onScreen;
+            m_status.visible = onScreen;
+            if (!onScreen)
             {
                 return;
             }
@@ -439,6 +446,23 @@ package org.falpi.ags.layers
             vertex(x0, y1);
             triangle(first, first + 1, first + 2);
             triangle(first, first + 2, first + 3);
+        }
+
+        /** True when the layer and all its ancestors are visible. */
+        private function isOnScreen():Boolean
+        {
+            for (var d:DisplayObject = this; d != null; d = d.parent)
+            {
+                if (!d.visible)
+                {
+                    return false;
+                }
+                if (d == stage)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private function status(text:String):void
