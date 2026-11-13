@@ -118,6 +118,17 @@ package org.falpi.ags.layers
         private var m_content:Sprite;
         private var m_tileContainer:Sprite;
         private var m_labelBitmap:Bitmap;
+        /**
+         * During a zoom animation the labels are split in pieces, one per symbol, that follow the point of the
+         * map they belong to without being scaled (the overlay would be scaled with the tiles). They stay until
+         * the labels are placed again at the new scale.
+         */
+        private var m_pieces:Sprite;
+        /**
+         * The pieces: Objects {bitmap, mapX, mapY (anchor), dx, dy (bitmap from anchor, pixels), boxes (collision
+         * boxes from anchor), hidden}.
+         */
+        private var m_pieceList:Array;
 
         private var m_definitionDirty:Boolean = false;
         private var m_resolver:BasemapResolver;
@@ -331,6 +342,10 @@ package org.falpi.ags.layers
             {
                 m_labelsVisible = value;
                 m_labelBitmap.visible = value;
+                if (!value)
+                {
+                    removePieces();
+                }
                 if (value)
                 {
                     requestLabels();
@@ -803,6 +818,158 @@ package org.falpi.ags.layers
             // are still laid out for an older extent, while the new animation is relative to the current
             // one. Lay them out again first, or they would jump back to their old size at every step
             rebase();
+            splitLabels();
+        }
+
+        /** Splits the label overlay into one piece per symbol (see m_pieces). */
+        private function splitLabels():void
+        {
+            var overlay:BitmapData = m_labelBitmap.bitmapData;
+            if (m_pieces != null || m_placer == null || !m_labelsVisible || overlay == null || !m_labelBitmap.visible)
+            {
+                return;
+            }
+            var shown:Array = m_placer.shownSymbols();
+            // every pixel goes to one piece only: where two symbols touch, the overlay must not be drawn twice
+            var work:BitmapData = overlay.clone();
+            m_pieces = new Sprite();
+            m_pieces.mouseEnabled = false;
+            m_pieces.mouseChildren = false;
+            m_pieceList = [];
+            var origin:Point = new Point(0, 0);
+            for each (var symbol:Object in shown)
+            {
+                var area:Rectangle = (symbol.drawn as Rectangle).intersection(work.rect);
+                area.x = Math.floor(area.x);
+                area.y = Math.floor(area.y);
+                area.width = Math.ceil(area.width);
+                area.height = Math.ceil(area.height);
+                if (area.width < 1 || area.height < 1)
+                {
+                    continue;
+                }
+                var data:BitmapData = new BitmapData(area.width, area.height, true, 0);
+                data.copyPixels(work, area, origin);
+                work.fillRect(area, 0);
+                var bitmap:Bitmap = new Bitmap(data);
+                m_pieces.addChild(bitmap);
+                var boxes:Vector.<Number> = symbol.boxes;
+                for (var i:int = 0; i < boxes.length; i += 2)
+                {
+                    boxes[i] -= symbol.x;
+                    boxes[i + 1] -= symbol.y;
+                }
+                m_pieceList.push({bitmap: bitmap, hidden: false, boxes: boxes,
+                    mapX: m_labelMapX + symbol.x * m_labelResolution, mapY: m_labelMapY - symbol.y * m_labelResolution,
+                    dx: area.x - symbol.x, dy: area.y - symbol.y});
+            }
+            work.dispose();
+            addChild(m_pieces);
+            m_labelBitmap.visible = false;
+            positionPieces();
+        }
+
+        /**
+         * Puts every piece where its point of the map is now, at its own size. When the labels come closer than
+         * they were placed (zooming out), the ones that would overlap a more important one are hidden, and stay
+         * hidden: labels that come back and forth would flicker.
+         */
+        private function positionPieces():void
+        {
+            if (m_pieces == null || m_resolution <= 0)
+            {
+                return;
+            }
+            var scale:Number = m_content.scaleX;
+            var offsetX:Number = m_content.x;
+            var offsetY:Number = m_content.y;
+            var closer:Boolean = m_labelResolution / m_resolution * scale < 0.999;
+            var cells:Object = closer ? {} : null;
+            for each (var piece:Object in m_pieceList)
+            {
+                var bitmap:Bitmap = piece.bitmap;
+                var x:Number = offsetX + (m_viewX + (piece.mapX - m_mapX) / m_resolution) * scale;
+                var y:Number = offsetY + (m_viewY + (m_mapY - piece.mapY) / m_resolution) * scale;
+                bitmap.x = Math.round(x + piece.dx);
+                bitmap.y = Math.round(y + piece.dy);
+                if (cells == null || piece.hidden)
+                {
+                    continue;
+                }
+                // the collision boxes of the placement, which do not overlap where the labels were placed
+                if (overlapsPieces(cells, piece.boxes, x, y, false))
+                {
+                    piece.hidden = true;
+                    bitmap.visible = false;
+                }
+                else
+                {
+                    overlapsPieces(cells, piece.boxes, x, y, true);
+                }
+            }
+        }
+
+        /** Grid of the boxes of the pieces kept: tells whether some of the boxes overlap them, or adds them. */
+        private static function overlapsPieces(cells:Object, boxes:Vector.<Number>, x:Number, y:Number, add:Boolean):Boolean
+        {
+            var size:Number = 64;
+            // the boxes include the padding of the style and touch where labels were placed close together:
+            // a few pixels of tolerance, so that labels are hidden only when they really come over each other
+            var tolerance:Number = 3;
+            for (var b:int = 0; b < boxes.length; b += 4)
+            {
+                var x1:Number = boxes[b] + x + tolerance;
+                var y1:Number = boxes[int(b + 1)] + y + tolerance;
+                var x2:Number = Math.max(x1, boxes[int(b + 2)] + x - tolerance);
+                var y2:Number = Math.max(y1, boxes[int(b + 3)] + y - tolerance);
+                for (var cx:int = Math.floor(x1 / size); cx <= Math.floor(x2 / size); cx++)
+                {
+                    for (var cy:int = Math.floor(y1 / size); cy <= Math.floor(y2 / size); cy++)
+                    {
+                        var key:String = cx + "," + cy;
+                        var cell:Array = cells[key] as Array;
+                        if (add)
+                        {
+                            if (cell == null)
+                            {
+                                cell = cells[key] = [];
+                            }
+                            cell.push(x1, y1, x2, y2);
+                            continue;
+                        }
+                        if (cell == null)
+                        {
+                            continue;
+                        }
+                        for (var i:int = 0; i < cell.length; i += 4)
+                        {
+                            if (x1 < cell[i + 2] && x2 > cell[i] && y1 < cell[i + 3] && y2 > cell[i + 1])
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        private function removePieces():void
+        {
+            if (m_pieces == null)
+            {
+                return;
+            }
+            for each (var piece:Object in m_pieceList)
+            {
+                (piece.bitmap as Bitmap).bitmapData.dispose();
+            }
+            if (m_pieces.parent != null)
+            {
+                m_pieces.parent.removeChild(m_pieces);
+            }
+            m_pieces = null;
+            m_pieceList = null;
         }
 
         /** Lays out the existing tiles (kept as placeholders) and the labels for the current map extent. */
@@ -825,6 +992,7 @@ package org.falpi.ags.layers
                 positionTile(tile);
             }
             positionLabels();
+            positionPieces();
         }
 
         override protected function zoomUpdateHandler(event:ZoomEvent):void
@@ -843,6 +1011,7 @@ package org.falpi.ags.layers
             m_content.scaleY = ratio;
             m_content.x = x + scrollRect.x - scrollRect.x * ratio;
             m_content.y = y + scrollRect.y - scrollRect.y * ratio;
+            positionPieces();
         }
 
         override protected function zoomEndHandler(event:ZoomEvent):void
@@ -876,6 +1045,7 @@ package org.falpi.ags.layers
             }
             updateTiles(new Rectangle(m_viewX, m_viewY, m_viewWidth, m_viewHeight));
             positionLabels();
+            positionPieces();
             requestLabels();
             checkComplete();
         }
@@ -1247,6 +1417,7 @@ package org.falpi.ags.layers
 
         private function clearTiles(clearData:Boolean):void
         {
+            removePieces();
             for each (var tile:Object in m_tiles)
             {
                 removeTile(tile);
@@ -1498,6 +1669,8 @@ package org.falpi.ags.layers
         private function placeLabels(area:Rectangle = null):void
         {
             var interim:Boolean = area != null;
+            // the labels placed at the new scale replace the pieces of the zoom animation
+            removePieces();
             if (!interim)
             {
                 m_labelsDirty = false;

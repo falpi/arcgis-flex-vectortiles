@@ -111,7 +111,8 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
   often when placing them is slow: at most an eighth of the time) and when it stays still for a moment.
   These placements only add the labels of the area brought into view, next to the ones already shown;
   on release all of them are placed again, so a few may move.
-  During a zoom they are hidden and come back at the new scale.
+- During a zoom animation the labels keep their size and follow the map; when zooming out, those that would
+  overlap a more important one are hidden. They are placed again at the new scale when the animation ends.
 - CPU rendering, spread over several frames: a few milliseconds per tile with the Esri styles in a release
   build, more with styles that have hundreds of layers (e.g. OpenStreetMap Shortbread).
 - **Measure performance on release builds**: with a debug SWF or the debugger Flash Player the same code

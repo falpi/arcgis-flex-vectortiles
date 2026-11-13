@@ -222,6 +222,52 @@ package org.falpi.ags.layers.vectorTiles.labels
             }
         }
 
+        /**
+         * The symbols shown by the last placement, in priority order (the first ones won the collisions):
+         * Objects {drawn: Rectangle of their pixels, x, y: the point of the map they belong to, boxes: their
+         * collision boxes (x1, y1, x2, y2...)}, in pixels of the overlay of that placement.
+         */
+        public function shownSymbols():Array
+        {
+            var list:Array = [];
+            for each (var r:Object in m_records)
+            {
+                var drawn:Rectangle = r.drawn as Rectangle;
+                if (drawn == null)
+                {
+                    continue;
+                }
+                var local:Rectangle = drawn.clone();
+                local.offset(-m_originX, -m_originY);
+                var x:Number;
+                var y:Number;
+                var b:Vector.<Number>;
+                if (r.key != null)
+                {
+                    x = r.x;
+                    y = r.y;
+                }
+                else
+                {
+                    // an icon alone: the middle of its box
+                    b = r.boxes;
+                    x = (b[0] + b[2]) / 2;
+                    y = (b[1] + b[3]) / 2;
+                }
+                var boxes:Vector.<Number> = new Vector.<Number>();
+                b = r.boxes;
+                for (var i:int = 0; i < b.length; i += 5)
+                {
+                    if (b[int(i + 4)] != 0)
+                    {
+                        boxes.push(b[i] - m_originX, b[int(i + 1)] - m_originY, b[int(i + 2)] - m_originX, b[int(i + 3)] - m_originY);
+                    }
+                }
+                list.push({drawn: local, x: x - m_originX, y: y - m_originY, boxes: boxes});
+            }
+            return list;
+        }
+
         /** A new record of a symbol shown (see m_records). */
         private function record(c:SymbolCandidate):Object
         {
