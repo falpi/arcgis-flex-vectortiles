@@ -11,5 +11,9 @@ package org.falpi.ags.layers.vectorTiles.labels
         public var halo:BitmapData;
         /** Size / 24: converts glyph units to pixels. */
         public var scale:Number;
+        /** Whole pixels from the baseline of the line to the top of the bitmaps (the fraction is in the bitmaps). */
+        public var offsetY:int;
+        /** Glyphs drawn in place (GlyphManager.rasterizeAt): column of the bitmaps in the target. */
+        public var offsetX:int;
     }
 }

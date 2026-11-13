@@ -145,13 +145,14 @@ package org.falpi.ags.layers.vectorTiles.labels
                         var size:Number = layer.value("text-size", z, f);
                         var offset:Array = layer.value("text-offset", z, f) as Array;
                         var maxWidth:Number = c.alongLine && !isViewportText(layer) ? 0 : Number(layer.value("text-max-width", z, f)) * Glyph.BASE_SIZE;
-                        var anchor:String = c.alongLine && !isViewportText(layer) ? "center" : String(layer.value("text-anchor", z, f));
+                        var follows:Boolean = c.alongLine && !isViewportText(layer);
+                        var anchor:String = follows ? "center" : String(layer.value("text-anchor", z, f));
                         var shaping:Shaping = TextShaper.shape(text, stack, maxWidth,
                             Number(layer.value("text-line-height", z, f)) * Glyph.BASE_SIZE,
                             Number(layer.value("text-letter-spacing", z, f)) * Glyph.BASE_SIZE,
                             anchor, String(layer.value("text-justify", z, f)),
                             offset != null ? Number(offset[0]) * Glyph.BASE_SIZE : 0,
-                            offset != null ? Number(offset[1]) * Glyph.BASE_SIZE : 0);
+                            offset != null && !follows ? Number(offset[1]) * Glyph.BASE_SIZE : 0);
                         if (shaping != null && size > 0)
                         {
                             var opacity:Number = layer.value("text-opacity", z, f);
@@ -161,6 +162,8 @@ package org.falpi.ags.layers.vectorTiles.labels
                             L.stack = stack;
                             L.shaping = shaping;
                             L.textSize = Math.round(size * 4) / 4;
+                            // text along a line: text-offset moves the text to one side of the line (see placeOnLine)
+                            L.lineOffset = follows && offset != null ? Number(offset[1]) * Number(L.textSize) : 0;
                             L.textColor = color != null ? color.argb(opacity) : 0xff000000;
                             L.haloColor = halo != null ? halo.argb(opacity) : 0;
                             L.haloWidth = Math.round(Number(layer.value("text-halo-width", z, f)) * 4) / 4;
@@ -261,8 +264,25 @@ package org.falpi.ags.layers.vectorTiles.labels
                 labelLength = L.iconWidth;
             }
             var spacing:Number = Math.max(Number(L.spacing), labelLength * 1.25);
-            for each (var line:Vector.<Number> in c.lines)
+            var lines:Array = c.lines;
+            if (L.shaping != null && L.textFollowsLine)
             {
+                // text follows the line without its small wiggles: on a jagged line (a ridge, a stream) the
+                // letters would be turned one by one and, moved to the side by text-offset, bunch and spread
+                if (L.lines == null)
+                {
+                    L.lines = [];
+                    for each (var raw:Vector.<Number> in lines)
+                    {
+                        L.lines.push(simplify(raw, Number(L.textSize) * 0.35));
+                    }
+                    L.sideLines = {};
+                }
+                lines = L.lines;
+            }
+            for (var lineIndex:int = 0; lineIndex < lines.length; lineIndex++)
+            {
+                var line:Vector.<Number> = lines[lineIndex];
                 var n:int = line.length;
                 var total:Number = 0;
                 for (i = 2; i < n; i += 2)
@@ -280,14 +300,14 @@ package org.falpi.ags.layers.vectorTiles.labels
                 var d:Number;
                 for (d = first; d <= total - labelLength / 2; d += spacing)
                 {
-                    if (d >= labelLength / 2 && placeOnLine(c, L, line, d, tx, ty, size))
+                    if (d >= labelLength / 2 && placeOnLine(c, L, line, d, tx, ty, size, lineIndex, total))
                     {
                         placedAny = true;
                     }
                 }
                 if (!placedAny && first > total - labelLength / 2)
                 {
-                    placeOnLine(c, L, line, total / 2, tx, ty, size);
+                    placeOnLine(c, L, line, total / 2, tx, ty, size, lineIndex, total);
                 }
             }
         }
@@ -320,8 +340,152 @@ package org.falpi.ags.layers.vectorTiles.labels
             return Math.atan2(dy, dx);
         }
 
+        private static function lengthOf(line:Vector.<Number>):Number
+        {
+            var total:Number = 0;
+            for (var i:int = 2; i < line.length; i += 2)
+            {
+                var dx:Number = line[i] - line[i - 2];
+                var dy:Number = line[i + 1] - line[i - 1];
+                total += Math.sqrt(dx * dx + dy * dy);
+            }
+            return total;
+        }
+
+        /** The line moved sideways by distance pixels (positive: to the right of its direction, y down). */
+        private static function offsetLine(line:Vector.<Number>, distance:Number):Vector.<Number>
+        {
+            var n:int = line.length;
+            var result:Vector.<Number> = new Vector.<Number>(n, true);
+            var previousX:Number = 0;
+            var previousY:Number = 0;
+            var hasPrevious:Boolean = false;
+            for (var i:int = 0; i < n; i += 2)
+            {
+                var nx:Number = 0;
+                var ny:Number = 0;
+                var hasNext:Boolean = false;
+                if (i + 3 < n)
+                {
+                    var dx:Number = line[i + 2] - line[i];
+                    var dy:Number = line[i + 3] - line[i + 1];
+                    var length:Number = Math.sqrt(dx * dx + dy * dy);
+                    if (length > 0)
+                    {
+                        nx = -dy / length;
+                        ny = dx / length;
+                        hasNext = true;
+                    }
+                }
+                var mx:Number = hasNext ? nx : previousX;
+                var my:Number = hasNext ? ny : previousY;
+                if (hasNext && hasPrevious)
+                {
+                    // miter between the two segments, limited where the line folds back
+                    mx = nx + previousX;
+                    my = ny + previousY;
+                    var m:Number = Math.sqrt(mx * mx + my * my);
+                    if (m > 0.001)
+                    {
+                        mx /= m;
+                        my /= m;
+                        var cosine:Number = Math.max(0.5, mx * nx + my * ny);
+                        mx /= cosine;
+                        my /= cosine;
+                    }
+                    else
+                    {
+                        mx = nx;
+                        my = ny;
+                    }
+                }
+                result[i] = line[i] + mx * distance;
+                result[i + 1] = line[i + 1] + my * distance;
+                if (hasNext)
+                {
+                    previousX = nx;
+                    previousY = ny;
+                    hasPrevious = true;
+                }
+            }
+            return result;
+        }
+
+        /** Douglas-Peucker: the line without the vertices closer than tolerance to the simplified line. */
+        private static function simplify(line:Vector.<Number>, tolerance:Number):Vector.<Number>
+        {
+            var count:int = line.length >> 1;
+            if (count < 3)
+            {
+                return line;
+            }
+            var keep:Vector.<Boolean> = new Vector.<Boolean>(count, true);
+            keep[0] = true;
+            keep[count - 1] = true;
+            var stack:Vector.<int> = new Vector.<int>();
+            stack.push(0, count - 1);
+            var limit:Number = tolerance * tolerance;
+            var kept:int = 2;
+            while (stack.length > 0)
+            {
+                var last:int = stack.pop();
+                var first:int = stack.pop();
+                var x0:Number = line[first << 1];
+                var y0:Number = line[(first << 1) + 1];
+                var dx:Number = line[last << 1] - x0;
+                var dy:Number = line[(last << 1) + 1] - y0;
+                var length2:Number = dx * dx + dy * dy;
+                var worst:Number = limit;
+                var index:int = -1;
+                for (var i:int = first + 1; i < last; i++)
+                {
+                    var px:Number = line[i << 1] - x0;
+                    var py:Number = line[(i << 1) + 1] - y0;
+                    var distance2:Number;
+                    if (length2 > 0)
+                    {
+                        var t:Number = (px * dx + py * dy) / length2;
+                        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                        px -= dx * t;
+                        py -= dy * t;
+                    }
+                    distance2 = px * px + py * py;
+                    if (distance2 > worst)
+                    {
+                        worst = distance2;
+                        index = i;
+                    }
+                }
+                if (index >= 0)
+                {
+                    keep[index] = true;
+                    kept++;
+                    stack.push(first, index, index, last);
+                }
+            }
+            if (kept == count)
+            {
+                return line;
+            }
+            var result:Vector.<Number> = new Vector.<Number>(kept << 1, true);
+            var n:int = 0;
+            for (var k:int = 0; k < count; k++)
+            {
+                if (keep[k])
+                {
+                    result[n++] = line[k << 1];
+                    result[n++] = line[(k << 1) + 1];
+                }
+            }
+            return result;
+        }
+
+        /**
+         * @param lineIndex position of the line in L.lines
+         * @param total length of the line
+         */
         private function placeOnLine(c:SymbolCandidate, L:Object, line:Vector.<Number>, d:Number,
-                                     tx:Number, ty:Number, size:Number):Boolean
+                                     tx:Number, ty:Number, size:Number, lineIndex:int, total:Number):Boolean
         {
             var angle:Number = pointAt(line, d);
             var ax:Number = m_point.x;
@@ -349,6 +513,28 @@ package org.falpi.ags.layers.vectorTiles.labels
             var shaping:Shaping = L.shaping as Shaping;
             var scale:Number = Number(L.textSize) / Glyph.BASE_SIZE;
             var flip:Boolean = Boolean(L.keepUpright) && (angle > Math.PI / 2 || angle < -Math.PI / 2);
+            var lineOffset:Number = L.lineOffset;
+            if (lineOffset != 0)
+            {
+                // text beside the line: the glyphs are laid on a parallel line, at their own distances along
+                // it. Moving every glyph sideways from the line itself opens gaps on the outside of the bends
+                // and piles the letters up on the inside. Text turned upright reads the other way, so its
+                // "below" is the other side of the line.
+                var side:Number = flip ? -lineOffset : lineOffset;
+                var sideKey:String = lineIndex + (flip ? "-" : "+");
+                var parallel:Vector.<Number> = L.sideLines[sideKey] as Vector.<Number>;
+                if (parallel == null)
+                {
+                    parallel = L.sideLines[sideKey] = offsetLine(line, side);
+                }
+                var parallelLength:Number = lengthOf(parallel);
+                if (!(total > 0) || !(parallelLength > 0))
+                {
+                    return false;
+                }
+                d = d * parallelLength / total;
+                line = parallel;
+            }
             var count:int = shaping.glyphs.length;
             var xs:Vector.<Number> = new Vector.<Number>(count, true);
             var ys:Vector.<Number> = new Vector.<Number>(count, true);
@@ -360,12 +546,23 @@ package org.falpi.ags.layers.vectorTiles.labels
             for (i = 0; i < count; i++)
             {
                 var glyph:Glyph = shaping.glyphs[i];
-                var center:Number = (shaping.xs[i] + glyph.advance / 2) * scale;
-                var a:Number = pointAt(line, flip ? d - center : d + center);
-                if (flip)
+                // the glyph lies on the chord between the points where it starts and ends on the line
+                var before:Number = shaping.xs[i] * scale;
+                var after:Number = (shaping.xs[i] + glyph.advance) * scale;
+                var a:Number = pointAt(line, flip ? d - before : d + before);
+                var startX:Number = m_point.x;
+                var startY:Number = m_point.y;
+                var endAngle:Number = pointAt(line, flip ? d - after : d + after);
+                if (m_point.x != startX || m_point.y != startY)
                 {
-                    a += Math.PI;
+                    a = Math.atan2(m_point.y - startY, m_point.x - startX);
                 }
+                else
+                {
+                    a = flip ? endAngle + Math.PI : endAngle;
+                }
+                m_point.x = (m_point.x + startX) / 2;
+                m_point.y = (m_point.y + startY) / 2;
                 if (!isNaN(previous))
                 {
                     var delta:Number = Math.abs(a - previous);
@@ -575,11 +772,34 @@ package org.falpi.ags.layers.vectorTiles.labels
             var scale:Number = size / Glyph.BASE_SIZE;
             var count:int = shaping.glyphs.length;
             var rasters:Vector.<GlyphRaster> = new Vector.<GlyphRaster>(count, true);
+            var columns:Vector.<int> = new Vector.<int>(count, true);
+            var phases:int = GlyphManager.PHASES;
             var i:int;
+            var glyph:Glyph;
             var hasHalo:Boolean = false;
             for (i = 0; i < count; i++)
             {
-                rasters[i] = m_glyphs.rasterize(stack, shaping.glyphs[i], size, L.textColor, L.haloColor, L.haloWidth, L.haloBlur);
+                glyph = shaping.glyphs[i];
+                var phase:int = 0;
+                if (op.kind == 1)
+                {
+                    // horizontal text: the glyph is drawn at its place inside the pixel, to the nearest quarter
+                    var quarters:int = Math.round((op.x + (shaping.xs[i] + glyph.left - Glyph.BORDER) * scale) * phases);
+                    columns[i] = Math.floor(quarters / phases);
+                    phase = quarters - columns[i] * phases;
+                    rasters[i] = m_glyphs.rasterize(stack, glyph, size, phase, L.textColor, L.haloColor, L.haloWidth, L.haloBlur);
+                }
+                else
+                {
+                    // text along a line: every glyph is drawn at its own angle and place
+                    m_matrix.identity();
+                    m_matrix.scale(scale, scale);
+                    m_matrix.translate((glyph.left - Glyph.BORDER - glyph.advance / 2) * scale,
+                        (shaping.ys[i] - glyph.top - Glyph.BORDER) * scale);
+                    m_matrix.rotate(op.angles[i]);
+                    m_matrix.translate(op.xs[i], op.ys[i]);
+                    rasters[i] = m_glyphs.rasterizeAt(glyph, size, m_matrix, L.textColor, L.haloColor, L.haloWidth, L.haloBlur);
+                }
                 if (rasters[i].halo != null)
                 {
                     hasHalo = true;
@@ -595,22 +815,29 @@ package org.falpi.ags.layers.vectorTiles.labels
                     {
                         continue;
                     }
-                    var glyph:Glyph = shaping.glyphs[i];
+                    glyph = shaping.glyphs[i];
                     if (op.kind == 1)
                     {
-                        m_point.x = Math.round(op.x + (shaping.xs[i] + glyph.left - Glyph.BORDER) * scale);
-                        m_point.y = Math.round(op.y + (shaping.ys[i] - glyph.top - Glyph.BORDER) * scale);
+                        // one baseline for the whole line, on a pixel row
+                        m_point.x = columns[i];
+                        m_point.y = Math.round(op.y + shaping.ys[i] * scale) + rasters[i].offsetY;
                         target.copyPixels(bitmap, bitmap.rect, m_point, null, null, true);
                     }
                     else
                     {
-                        m_matrix.identity();
-                        m_matrix.translate((glyph.left - Glyph.BORDER - glyph.advance / 2) * scale,
-                            (shaping.ys[i] - glyph.top - Glyph.BORDER) * scale);
-                        m_matrix.rotate(op.angles[i]);
-                        m_matrix.translate(op.xs[i], op.ys[i]);
-                        target.draw(bitmap, m_matrix, null, null, null, true);
+                        m_point.x = rasters[i].offsetX;
+                        m_point.y = rasters[i].offsetY;
+                        target.copyPixels(bitmap, bitmap.rect, m_point, null, null, true);
                     }
+                }
+            }
+            if (op.kind != 1)
+            {
+                // drawn for this label only
+                for (i = 0; i < count; i++)
+                {
+                    if (rasters[i].fill != null) rasters[i].fill.dispose();
+                    if (rasters[i].halo != null) rasters[i].halo.dispose();
                 }
             }
         }
