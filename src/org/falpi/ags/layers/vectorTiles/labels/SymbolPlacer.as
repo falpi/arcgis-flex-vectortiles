@@ -11,6 +11,7 @@ package org.falpi.ags.layers.vectorTiles.labels
     import flash.geom.ColorTransform;
     import flash.geom.Matrix;
     import flash.geom.Point;
+    import flash.geom.Rectangle;
 
     /**
      * Places the symbols (labels and icons) of the visible tiles: evaluates
@@ -43,6 +44,21 @@ package org.falpi.ags.layers.vectorTiles.labels
         private var m_index:CollisionIndex = new CollisionIndex();
         private var m_placedTexts:Object;
         private var m_ops:Array;
+        /** Counter of the full placements: an incremental placement continues the current one. */
+        private var m_generation:int = 0;
+        /** Position of the overlay being placed, in layer pixels (see CollisionIndex.offsetX). */
+        private var m_originX:Number = 0;
+        private var m_originY:Number = 0;
+        /** Set by placePoint when the symbol was refused only because it was out of the overlay. */
+        private var m_outside:Boolean = false;
+        /**
+         * The symbols shown by the current placement, for the incremental ones: Objects {candidate, boxes
+         * (x1, y1, x2, y2, indexed per box, in layer pixels), key, x, y (repeat check), ops, drawn (Rectangle of
+         * the pixels drawn, in layer pixels)}.
+         */
+        private var m_records:Array = [];
+        /** Pixels touched by the drawOp in progress (overlay pixels). */
+        private var m_drawn:Rectangle;
         private var m_zoom:Number;
         private var m_width:Number;
         private var m_height:Number;
@@ -56,19 +72,181 @@ package org.falpi.ags.layers.vectorTiles.labels
         }
 
         /**
+         * Places all the symbols on an empty overlay.
          * @param target overlay bitmap (cleared by the caller)
          * @param zoom style zoom of the view
          * @param tiles Array of Objects {x, y, size, symbols}: tile position in target pixels and its candidates
+         * @param originX, originY position of the overlay in layer pixels
          */
-        public function place(target:BitmapData, zoom:Number, tiles:Array):void
+        public function place(target:BitmapData, zoom:Number, tiles:Array, originX:Number = 0, originY:Number = 0):void
+        {
+            m_generation++;
+            m_index.clear();
+            m_placedTexts = {};
+            m_records = [];
+            run(target, zoom, tiles, originX, originY);
+        }
+
+        /**
+         * Continues the last placement on an overlay that already shows its symbols (moved to its new origin by
+         * the caller): only the symbols that the last placement could not settle are tried, against the boxes it
+         * took. Used while the map is dragged, where only the area brought into view needs new symbols. They
+         * come after the ones already shown, so a full placement may arrange things differently.
+         */
+        public function placeMore(target:BitmapData, zoom:Number, tiles:Array, originX:Number, originY:Number):void
+        {
+            if (m_placedTexts == null || zoom != m_zoom)
+            {
+                place(target, zoom, tiles, originX, originY);
+                return;
+            }
+            prune(target, originX, originY);
+            run(target, zoom, tiles, originX, originY);
+        }
+
+        /**
+         * Before an incremental placement: the symbols that are no longer entirely inside the new overlay are
+         * erased from it (the copy of the previous one would keep them cut) and forgotten, boxes and repeat
+         * check included, so that they are placed again whole when they come back into view. Symbols that the
+         * erasing touched (overlapping ones) are erased too and drawn again.
+         */
+        private function prune(target:BitmapData, originX:Number, originY:Number):void
+        {
+            var x0:Number = originX;
+            var y0:Number = originY;
+            var x1:Number = originX + target.width;
+            var y1:Number = originY + target.height;
+            var kept:Array = [];
+            var erased:Array = [];
+            var r:Object;
+            var i:int;
+            for each (r in m_records)
+            {
+                var b:Vector.<Number> = r.boxes;
+                var inside:Boolean = true;
+                for (i = 0; i < b.length; i += 5)
+                {
+                    if (b[i] < x0 || b[int(i + 1)] < y0 || b[int(i + 2)] > x1 || b[int(i + 3)] > y1)
+                    {
+                        inside = false;
+                        break;
+                    }
+                }
+                if (inside)
+                {
+                    kept.push(r);
+                    continue;
+                }
+                if (r.candidate.settled == m_generation)
+                {
+                    r.candidate.settled = -1;
+                }
+                if (r.drawn != null)
+                {
+                    erased.push(r.drawn);
+                }
+            }
+            // symbols overlapping an erased area lose pixels too: they are erased whole and drawn again
+            var redraw:Array = [];
+            var changed:Boolean = erased.length > 0;
+            while (changed)
+            {
+                changed = false;
+                for each (r in kept)
+                {
+                    if (r.redraw || r.drawn == null)
+                    {
+                        continue;
+                    }
+                    for each (var area:Rectangle in erased)
+                    {
+                        if (r.drawn.intersects(area))
+                        {
+                            r.redraw = true;
+                            redraw.push(r);
+                            erased.push(r.drawn);
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            var local:Rectangle = new Rectangle();
+            for each (area in erased)
+            {
+                local.setTo(area.x - originX, area.y - originY, area.width, area.height);
+                target.fillRect(local, 0);
+            }
+            // boxes and repeat check of the symbols kept, in layer pixels
+            m_index.clear();
+            m_index.offsetX = 0;
+            m_index.offsetY = 0;
+            m_placedTexts = {};
+            for each (r in kept)
+            {
+                b = r.boxes;
+                for (i = 0; i < b.length; i += 5)
+                {
+                    if (b[int(i + 4)] != 0)
+                    {
+                        m_index.insert(b[i], b[int(i + 1)], b[int(i + 2)], b[int(i + 3)]);
+                    }
+                }
+                if (r.key != null)
+                {
+                    var placed:Array = m_placedTexts[r.key] as Array;
+                    if (placed == null)
+                    {
+                        placed = m_placedTexts[r.key] = [];
+                    }
+                    placed.push(r.x, r.y);
+                }
+            }
+            m_records = kept;
+            // the overlapping symbols drawn again, in style order
+            var ops:Array = [];
+            for each (r in redraw)
+            {
+                r.redraw = false;
+                for each (var op:Object in r.ops)
+                {
+                    ops.push(op);
+                }
+            }
+            ops.sortOn("order", Array.NUMERIC);
+            m_originX = originX;
+            m_originY = originY;
+            for each (op in ops)
+            {
+                drawOp(target, op, true);
+            }
+        }
+
+        /** A new record of a symbol shown (see m_records). */
+        private function record(c:SymbolCandidate):Object
+        {
+            var r:Object = {candidate: c, boxes: new Vector.<Number>(), key: null, x: 0, y: 0, ops: [], drawn: null};
+            m_records.push(r);
+            return r;
+        }
+
+        /** Adds a box (overlay pixels) to a record, in layer pixels. */
+        private function recordBox(r:Object, x1:Number, y1:Number, x2:Number, y2:Number, indexed:Boolean):void
+        {
+            r.boxes.push(x1 + m_originX, y1 + m_originY, x2 + m_originX, y2 + m_originY, indexed ? 1 : 0);
+        }
+
+        private function run(target:BitmapData, zoom:Number, tiles:Array, originX:Number, originY:Number):void
         {
             incomplete = false;
             placedCount = 0;
             m_zoom = zoom;
             m_width = target.width;
             m_height = target.height;
-            m_index.clear();
-            m_placedTexts = {};
+            m_originX = originX;
+            m_originY = originY;
+            m_index.offsetX = originX;
+            m_index.offsetY = originY;
             m_ops = [];
 
             // bucket the candidates by style layer
@@ -86,6 +264,10 @@ package org.falpi.ags.layers.vectorTiles.labels
                 }
                 for (i = 0; i < symbols.length; i++)
                 {
+                    if (symbols[i].settled == m_generation)
+                    {
+                        continue;
+                    }
                     var layerIndex:int = symbols[i].layer.index;
                     var bucket:Array = buckets[layerIndex] as Array;
                     if (bucket == null)
@@ -116,11 +298,10 @@ package org.falpi.ags.layers.vectorTiles.labels
             m_ops.sortOn("order", Array.NUMERIC);
             for each (var op:Object in m_ops)
             {
-                drawOp(target, op);
+                drawOp(target, op, false);
             }
             placedCount = m_ops.length;
             m_ops = null;
-            m_placedTexts = null;
         }
 
         /**
@@ -316,10 +497,23 @@ package org.falpi.ags.layers.vectorTiles.labels
             var i:int;
             if (!c.alongLine)
             {
+                // settled when no point was refused only for being out of the overlay; symbols along lines are
+                // tried again every time (their other anchors may come into view), the repeat check and the
+                // collisions keep the ones already shown from being drawn twice
                 var points:Vector.<Number> = c.points;
+                var settled:Boolean = true;
                 for (i = 0; i < points.length; i += 2)
                 {
+                    m_outside = false;
                     placePoint(c, L, tx + points[i], ty + points[i + 1], 0);
+                    if (m_outside)
+                    {
+                        settled = false;
+                    }
+                }
+                if (settled)
+                {
+                    c.settled = m_generation;
                 }
                 return;
             }
@@ -590,6 +784,14 @@ package org.falpi.ags.layers.vectorTiles.labels
                 ys[i] = ty + m_point.y;
                 angles[i] = a;
             }
+            for (i = 0; i < count; i++)
+            {
+                // only whole labels (see placePoint)
+                if (xs[i] - half < 0 || ys[i] - half < 0 || xs[i] + half > m_width || ys[i] + half > m_height)
+                {
+                    return false;
+                }
+            }
             if (!L.textAllowOverlap)
             {
                 for (i = 0; i < count; i++)
@@ -608,9 +810,19 @@ package org.falpi.ags.layers.vectorTiles.labels
                 }
             }
             remember(key, x, y);
+            var rec:Object = record(c);
+            for (i = 0; i < count; i++)
+            {
+                recordBox(rec, xs[i] - half, ys[i] - half, xs[i] + half, ys[i] + half, !L.textIgnore);
+            }
+            rec.key = key;
+            rec.x = x + m_originX;
+            rec.y = y + m_originY;
             if (L.textVisible)
             {
-                m_ops.push({order: c.layer.index * 2 + 1, kind: 2, L: L, xs: xs, ys: ys, angles: angles});
+                var recOp:Object = {order: c.layer.index * 2 + 1, kind: 2, L: L, xs: xs, ys: ys, angles: angles, record: rec};
+                rec.ops.push(recOp);
+                m_ops.push(recOp);
             }
             return true;
         }
@@ -619,6 +831,7 @@ package org.falpi.ags.layers.vectorTiles.labels
         {
             if (x < -100 || y < -100 || x > m_width + 100 || y > m_height + 100)
             {
+                m_outside = true;
                 return false;
             }
             var shaping:Shaping = L.shaping as Shaping;
@@ -646,9 +859,12 @@ package org.falpi.ags.layers.vectorTiles.labels
                 ty1 = y + shaping.top * scale - pad;
                 tx2 = x + shaping.right * scale + pad;
                 ty2 = y + shaping.bottom * scale + pad;
-                if (tx2 < 0 || ty2 < 0 || tx1 > m_width || ty1 > m_height)
+                if (tx1 < 0 || ty1 < 0 || tx2 > m_width || ty2 > m_height)
                 {
+                    // only whole symbols: one cut by the edge of the overlay would stay cut when an incremental
+                    // placement copies it (the overlay extends beyond the view, so nothing visible is lost)
                     placeText = false;
+                    m_outside = true;
                 }
                 else if (!L.textAllowOverlap && m_index.collides(tx1, ty1, tx2, ty2))
                 {
@@ -673,9 +889,10 @@ package org.falpi.ags.layers.vectorTiles.labels
                 iy1 = y + Number(L.iconDy) - hh - pad;
                 ix2 = x + Number(L.iconDx) + hw + pad;
                 iy2 = y + Number(L.iconDy) + hh + pad;
-                if (ix2 < 0 || iy2 < 0 || ix1 > m_width || iy1 > m_height)
+                if (ix1 < 0 || iy1 < 0 || ix2 > m_width || iy2 > m_height)
                 {
                     placeIcon = false;
+                    m_outside = true;
                 }
                 else if (!L.iconAllowOverlap && m_index.collides(ix1, iy1, ix2, iy2))
                 {
@@ -703,15 +920,20 @@ package org.falpi.ags.layers.vectorTiles.labels
             {
                 return false;
             }
+            var rec:Object = record(c);
+            var recOp:Object;
             if (placeIcon)
             {
                 if (!L.iconIgnore)
                 {
                     m_index.insert(ix1, iy1, ix2, iy2);
                 }
+                recordBox(rec, ix1, iy1, ix2, iy2, !L.iconIgnore);
                 if (L.iconOpacity > 0)
                 {
-                    m_ops.push({order: c.layer.index * 2, kind: 0, L: L, x: x + Number(L.iconDx), y: y + Number(L.iconDy), angle: iconAngle});
+                    recOp = {order: c.layer.index * 2, kind: 0, L: L, x: x + Number(L.iconDx), y: y + Number(L.iconDy), angle: iconAngle, record: rec};
+                    rec.ops.push(recOp);
+                    m_ops.push(recOp);
                 }
             }
             if (placeText)
@@ -720,10 +942,16 @@ package org.falpi.ags.layers.vectorTiles.labels
                 {
                     m_index.insert(tx1, ty1, tx2, ty2);
                 }
+                recordBox(rec, tx1, ty1, tx2, ty2, !L.textIgnore);
                 remember(key, x, y);
+                rec.key = key;
+                rec.x = x + m_originX;
+                rec.y = y + m_originY;
                 if (L.textVisible)
                 {
-                    m_ops.push({order: c.layer.index * 2 + 1, kind: 1, L: L, x: x, y: y});
+                    recOp = {order: c.layer.index * 2 + 1, kind: 1, L: L, x: x, y: y, record: rec};
+                    rec.ops.push(recOp);
+                    m_ops.push(recOp);
                 }
             }
             return true;
@@ -737,6 +965,8 @@ package org.falpi.ags.layers.vectorTiles.labels
                 return false;
             }
             var limit:Number = distance * distance;
+            x += m_originX;
+            y += m_originY;
             for (var i:int = 0; i < placed.length; i += 2)
             {
                 var dx:Number = placed[i] - x;
@@ -761,14 +991,80 @@ package org.falpi.ags.layers.vectorTiles.labels
                 placed = [];
                 m_placedTexts[key] = placed;
             }
-            placed.push(x, y);
+            placed.push(x + m_originX, y + m_originY);
         }
 
         // ------------------------------------------------------------------
         // drawing
         // ------------------------------------------------------------------
 
-        private function drawOp(target:BitmapData, op:Object):void
+        /**
+         * Draws a symbol and keeps the pixels it touched in its record (layer pixels).
+         * @param again a symbol of an earlier placement drawn again: its coordinates are moved to this overlay
+         */
+        private function drawOp(target:BitmapData, op:Object, again:Boolean):void
+        {
+            if (again)
+            {
+                // the coordinates of an op are overlay pixels of the placement that made it
+                op = moveOp(op, op.originX - m_originX, op.originY - m_originY);
+            }
+            else
+            {
+                op.originX = m_originX;
+                op.originY = m_originY;
+            }
+            m_drawn = null;
+            drawOpPixels(target, op);
+            var r:Object = op.record;
+            if (r != null && m_drawn != null && !again)
+            {
+                m_drawn.offset(m_originX, m_originY);
+                if (r.drawn == null)
+                {
+                    r.drawn = m_drawn;
+                }
+                else
+                {
+                    r.drawn = (r.drawn as Rectangle).union(m_drawn);
+                }
+            }
+        }
+
+        /** A copy of an op moved by dx, dy pixels. */
+        private static function moveOp(op:Object, dx:Number, dy:Number):Object
+        {
+            var moved:Object = {order: op.order, kind: op.kind, L: op.L, angle: op.angle, record: op.record,
+                                originX: op.originX, originY: op.originY};
+            if (op.kind == 2)
+            {
+                var n:int = op.xs.length;
+                var xs:Vector.<Number> = new Vector.<Number>(n, true);
+                var ys:Vector.<Number> = new Vector.<Number>(n, true);
+                for (var i:int = 0; i < n; i++)
+                {
+                    xs[i] = op.xs[i] + dx;
+                    ys[i] = op.ys[i] + dy;
+                }
+                moved.xs = xs;
+                moved.ys = ys;
+                moved.angles = op.angles;
+            }
+            else
+            {
+                moved.x = op.x + dx;
+                moved.y = op.y + dy;
+            }
+            return moved;
+        }
+
+        private function touched(x:Number, y:Number, width:Number, height:Number):void
+        {
+            var area:Rectangle = new Rectangle(Math.floor(x) - 1, Math.floor(y) - 1, Math.ceil(width) + 3, Math.ceil(height) + 3);
+            m_drawn = m_drawn == null ? area : m_drawn.union(area);
+        }
+
+        private function drawOpPixels(target:BitmapData, op:Object):void
         {
             var L:Object = op.L;
             if (op.kind == 0)
@@ -832,12 +1128,14 @@ package org.falpi.ags.layers.vectorTiles.labels
                         m_point.x = columns[i];
                         m_point.y = Math.round(op.y + shaping.ys[i] * scale) + rasters[i].offsetY;
                         target.copyPixels(bitmap, bitmap.rect, m_point, null, null, true);
+                        touched(m_point.x, m_point.y, bitmap.width, bitmap.height);
                     }
                     else
                     {
                         m_point.x = rasters[i].offsetX;
                         m_point.y = rasters[i].offsetY;
                         target.copyPixels(bitmap, bitmap.rect, m_point, null, null, true);
+                        touched(m_point.x, m_point.y, bitmap.width, bitmap.height);
                     }
                 }
             }
@@ -862,6 +1160,7 @@ package org.falpi.ags.layers.vectorTiles.labels
                 m_point.x = Math.round(x - image.width / 2);
                 m_point.y = Math.round(y - image.height / 2);
                 target.copyPixels(image, image.rect, m_point, null, null, true);
+                touched(m_point.x, m_point.y, image.width, image.height);
                 return;
             }
             m_matrix.identity();
@@ -873,6 +1172,9 @@ package org.falpi.ags.layers.vectorTiles.labels
             }
             m_matrix.translate(x, y);
             target.draw(image, m_matrix, opacity < 1 ? new ColorTransform(1, 1, 1, opacity) : null, null, null, true);
+            // the box of the turned image
+            var half:Number = Math.sqrt(image.width * image.width + image.height * image.height) * scale / 2;
+            touched(x - half, y - half, half * 2, half * 2);
         }
     }
 }

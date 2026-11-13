@@ -86,9 +86,10 @@ package org.falpi.ags.layers
         private static const PAN_PAUSE_MS:int = 200;
         /**
          * While it moves, they are placed again at most this often (ms), and never more often than eight
-         * times the last placement took: placing takes at most about an eighth of the time of the drag.
+         * times the last placement took: placing takes at most about an eighth of the time of the drag. These
+         * placements are incremental (only the area brought into view), so they are short.
          */
-        private static const PAN_INTERVAL_MS:int = 300;
+        private static const PAN_INTERVAL_MS:int = 150;
 
         private static const LOADING:int = 0;
         private static const QUEUED:int = 1;
@@ -170,6 +171,17 @@ package org.falpi.ags.layers
         private var m_panPlaced:int = 0;
         /** Milliseconds the last placement of the labels took. */
         private var m_placeMs:int = 0;
+        /**
+         * Something new for the labels arrived during the drag (a tile drawn, glyphs loaded) after the last
+         * placement: they are placed again even if the map has not moved since.
+         */
+        private var m_panDirty:Boolean = false;
+        /**
+         * getTimer of the end of the drag while the extent change that follows it has not reached updateLayer
+         * yet (0 otherwise). Until then the layer still has the view of the start of the drag: labels placed
+         * for it would show for a frame shifted by the whole drag.
+         */
+        private var m_panEndTime:int = 0;
         /** getTimer of the last pan or zoom step. */
         private var m_moveTime:int = -10000;
         private var m_statStart:int;
@@ -840,6 +852,7 @@ package org.falpi.ags.layers
 
         override protected function updateLayer():void
         {
+            m_panEndTime = 0;
             if (m_definition == null || map == null)
             {
                 return;
@@ -908,12 +921,14 @@ package org.falpi.ags.layers
         {
             m_panning = true;
             m_panPlaced = getTimer();
+            m_panDirty = false;
         }
 
         private function panEnd(event:PanEvent):void
         {
             // the extent change that follows places the labels of the final view
             m_panning = false;
+            m_panEndTime = Math.max(1, getTimer());
         }
 
         private function panUpdate(event:PanEvent):void
@@ -1286,9 +1301,12 @@ package org.falpi.ags.layers
             // dragging: the labels of the area brought into view are placed while the button is still held,
             // at intervals while the map moves and as soon as it stays still for a moment. In that frame no
             // tile is drawn, so that the two costs do not add up
-            var panWaiting:Boolean = m_panning && m_labelsVisible && m_definition.style.hasSymbols && m_moveTime > m_panPlaced;
-            if (panWaiting && (start - m_moveTime >= PAN_PAUSE_MS || start - m_panPlaced >= Math.max(PAN_INTERVAL_MS, m_placeMs * 8)))
+            var panWaiting:Boolean = m_panning && m_labelsVisible && m_definition.style.hasSymbols &&
+                (m_moveTime > m_panPlaced || m_panDirty);
+            var paused:Boolean = m_moveTime > m_panPlaced && start - m_moveTime >= PAN_PAUSE_MS;
+            if (panWaiting && (paused || start - m_panPlaced >= Math.max(PAN_INTERVAL_MS, m_placeMs * 8)))
             {
+                m_panDirty = false;
                 var scrollRect:Rectangle = viewportScrollRect();
                 if (scrollRect != null && scrollRect.width > 0)
                 {
@@ -1315,10 +1333,14 @@ package org.falpi.ags.layers
             if (rendered)
             {
                 m_labelsDirty = true;
+                m_panDirty = true;
                 checkComplete();
             }
-            else if (m_labelsDirty && m_renderQueue.length == 0 && !m_panning)
+            else if (m_labelsDirty && m_renderQueue.length == 0 && !m_panning &&
+                     (m_panEndTime == 0 || start - m_panEndTime > 1000))
             {
+                // after a drag, the labels wait for the new extent (a release without movement has none)
+                m_panEndTime = 0;
                 // wait for a quiet moment: placing labels while tiles keep arriving would be wasted work
                 if (!hasLoadingTiles() || getTimer() - m_labelsTime > 1500)
                 {
@@ -1449,6 +1471,7 @@ package org.falpi.ags.layers
                 return;
             }
             m_labelsDirty = true;
+            m_panDirty = true;
             startFrames();
         }
 
@@ -1515,9 +1538,23 @@ package org.falpi.ags.layers
             }
             var overlay:BitmapData = new BitmapData(width, height, true, 0);
             var placeStart:int = getTimer();
+            var previous:BitmapData = m_labelBitmap.bitmapData;
+            // while dragging, at the same scale: the labels already shown are kept (copied to the new origin) and
+            // only the symbols of the area brought into view are placed
+            var incremental:Boolean = interim && previous != null && m_labelBitmap.visible &&
+                Math.abs(m_labelResolution - m_resolution) <= m_resolution * 0.0001;
             try
             {
-                m_placer.place(overlay, m_zoom, list);
+                if (incremental)
+                {
+                    overlay.copyPixels(previous, previous.rect,
+                        new Point(Math.round(m_labelBitmap.x - originX), Math.round(m_labelBitmap.y - originY)));
+                    m_placer.placeMore(overlay, m_zoom, list, originX, originY);
+                }
+                else
+                {
+                    m_placer.place(overlay, m_zoom, list, originX, originY);
+                }
             }
             catch (error:Error)
             {
@@ -1525,7 +1562,6 @@ package org.falpi.ags.layers
             m_placeMs = getTimer() - placeStart;
             m_statPlaceCount++;
             m_statPlaceMs += m_placeMs;
-            var previous:BitmapData = m_labelBitmap.bitmapData;
             m_labelBitmap.bitmapData = overlay;
             m_labelBitmap.x = originX;
             m_labelBitmap.y = originY;

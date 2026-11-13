@@ -7,6 +7,13 @@ package org.falpi.ags.layers.vectorTiles.labels
 
         private var m_cells:Object = {};
 
+        /**
+         * Added to the coordinates of every box: the position of the overlay being placed. The boxes are kept
+         * in layer coordinates, so that a later placement on an overlay with another origin still sees them.
+         */
+        public var offsetX:Number = 0;
+        public var offsetY:Number = 0;
+
         public function clear():void
         {
             m_cells = {};
@@ -15,6 +22,10 @@ package org.falpi.ags.layers.vectorTiles.labels
         /** True when the box overlaps a box already inserted. */
         public function collides(x1:Number, y1:Number, x2:Number, y2:Number):Boolean
         {
+            x1 += offsetX;
+            x2 += offsetX;
+            y1 += offsetY;
+            y2 += offsetY;
             var cx1:int = Math.floor(x1 / CELL);
             var cy1:int = Math.floor(y1 / CELL);
             var cx2:int = Math.floor(x2 / CELL);
@@ -43,6 +54,10 @@ package org.falpi.ags.layers.vectorTiles.labels
 
         public function insert(x1:Number, y1:Number, x2:Number, y2:Number):void
         {
+            x1 += offsetX;
+            x2 += offsetX;
+            y1 += offsetY;
+            y2 += offsetY;
             var cx1:int = Math.floor(x1 / CELL);
             var cy1:int = Math.floor(y1 / CELL);
             var cx2:int = Math.floor(x2 / CELL);
