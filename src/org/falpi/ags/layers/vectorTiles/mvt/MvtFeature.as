@@ -24,6 +24,8 @@ package org.falpi.ags.layers.vectorTiles.mvt
         public var maxX:Number = 0;
         public var maxY:Number = 0;
 
+        private var m_partBounds:Vector.<Number>;
+
         private var m_bytes:ByteArray;
         private var m_geometryStart:int = -1;
         private var m_geometryLength:uint;
@@ -156,6 +158,45 @@ package org.falpi.ags.layers.vectorTiles.mvt
                 maxY = y1;
             }
             return parts;
+        }
+
+        /**
+         * Bounding boxes of the parts of the geometry: minX, minY, maxX, maxY for each part, in tile extent
+         * units. Computed on first use: only overzoomed tiles need them, to skip the parts they do not touch.
+         */
+        public function get partBounds():Vector.<Number>
+        {
+            if (m_partBounds == null)
+            {
+                var parts:Array = loadGeometry();
+                var count:int = parts.length;
+                var bounds:Vector.<Number> = new Vector.<Number>(count * 4, true);
+                for (var p:int = 0; p < count; p++)
+                {
+                    var part:Vector.<Number> = parts[p];
+                    var n:int = part.length;
+                    var x0:Number = Number.MAX_VALUE;
+                    var y0:Number = Number.MAX_VALUE;
+                    var x1:Number = -Number.MAX_VALUE;
+                    var y1:Number = -Number.MAX_VALUE;
+                    for (var i:int = 0; i < n; i += 2)
+                    {
+                        var x:Number = part[i];
+                        var y:Number = part[int(i + 1)];
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
+                    }
+                    var b:int = p << 2;
+                    bounds[b] = x0;
+                    bounds[int(b + 1)] = y0;
+                    bounds[int(b + 2)] = x1;
+                    bounds[int(b + 3)] = y1;
+                }
+                m_partBounds = bounds;
+            }
+            return m_partBounds;
         }
     }
 }

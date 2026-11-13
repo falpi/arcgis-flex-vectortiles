@@ -37,6 +37,8 @@ package org.falpi.ags.layers.vectorTiles.render
         private var m_zoom:Number;
         private var m_worldX:Number;
         private var m_worldY:Number;
+        /** Parts of the current feature that touch the tile (see selectParts). */
+        private var m_partVisible:Vector.<Boolean> = new Vector.<Boolean>();
 
         public function TileRenderer(style:Style, sprites:SpriteAtlas)
         {
@@ -254,7 +256,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     matrix = pattern != null ? patternMatrix(pattern) : null;
                 }
                 var parts:Array = feature.loadGeometry();
-                if (clip && (outsideTile(feature, k, ox, oy, 2) || !intersectsTile(parts, k, ox, oy, 2)))
+                if (clip && (outsideTile(feature, k, ox, oy, 2) || !selectParts(feature, parts, k, ox, oy, 2)))
                 {
                     continue;
                 }
@@ -284,7 +286,7 @@ package org.falpi.ags.layers.vectorTiles.render
                 {
                     continue;
                 }
-                drawParts(parts, k, ox, oy);
+                drawParts(parts, k, ox, oy, clip);
                 m_g.endFill();
             }
             m_g.lineStyle();
@@ -454,17 +456,17 @@ package org.falpi.ags.layers.vectorTiles.render
                     m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
                 }
                 var parts:Array = feature.loadGeometry();
-                if (clip && (outsideTile(feature, k, ox, oy, width + pad) || !intersectsTile(parts, k, ox, oy, width + pad)))
+                if (clip && (outsideTile(feature, k, ox, oy, width + pad) || !selectParts(feature, parts, k, ox, oy, width + pad)))
                 {
                     continue;
                 }
                 if (dashes != null && dashes.length >= 2 && width * (Number(dashes[0]) + Number(dashes[1])) >= 1.5)
                 {
-                    drawDashedParts(parts, k, ox, oy, dashes, width);
+                    drawDashedParts(parts, k, ox, oy, dashes, width, clip);
                 }
                 else
                 {
-                    drawParts(parts, k, ox, oy);
+                    drawParts(parts, k, ox, oy, clip);
                 }
             }
             m_g.lineStyle();
@@ -524,7 +526,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     continue;
                 }
                 var parts:Array = feature.loadGeometry();
-                if (clip && (outsideTile(feature, k, ox, oy, width) || !intersectsTile(parts, k, ox, oy, width)))
+                if (clip && (outsideTile(feature, k, ox, oy, width) || !selectParts(feature, parts, k, ox, oy, width)))
                 {
                     continue;
                 }
@@ -536,7 +538,7 @@ package org.falpi.ags.layers.vectorTiles.render
                 {
                     var part:Vector.<Number> = parts[p];
                     var n:int = part.length;
-                    if (n < 4)
+                    if (n < 4 || (clip && !m_partVisible[p]))
                     {
                         continue;
                     }
@@ -591,15 +593,17 @@ package org.falpi.ags.layers.vectorTiles.render
             return gap > 0 ? gap + width * 2 : width;
         }
 
-        private function drawParts(parts:Array, k:Number, ox:Number, oy:Number):void
+        /** @param selected draw only the parts chosen by the last selectParts (overzoomed tiles) */
+        private function drawParts(parts:Array, k:Number, ox:Number, oy:Number, selected:Boolean = false):void
         {
             var g:Graphics = m_g;
             var numParts:int = parts.length;
+            var visible:Vector.<Boolean> = m_partVisible;
             for (var p:int = 0; p < numParts; p++)
             {
                 var part:Vector.<Number> = parts[p];
                 var n:int = part.length;
-                if (n < 4)
+                if (n < 4 || (selected && !visible[p]))
                 {
                     continue;
                 }
@@ -612,7 +616,8 @@ package org.falpi.ags.layers.vectorTiles.render
             }
         }
 
-        private function drawDashedParts(parts:Array, k:Number, ox:Number, oy:Number, dashes:Array, width:Number):void
+        private function drawDashedParts(parts:Array, k:Number, ox:Number, oy:Number, dashes:Array, width:Number,
+                                         selected:Boolean = false):void
         {
             var g:Graphics = m_g;
             var numDashes:int = dashes.length;
@@ -626,7 +631,7 @@ package org.falpi.ags.layers.vectorTiles.render
             {
                 var part:Vector.<Number> = parts[p];
                 var n:int = part.length;
-                if (n < 4)
+                if (n < 4 || (selected && !m_partVisible[p]))
                 {
                     continue;
                 }
@@ -709,36 +714,44 @@ package org.falpi.ags.layers.vectorTiles.render
                    feature.maxY * k + oy < -pad || feature.minY * k + oy > m_size + pad;
         }
 
-        /** Cheap bounding box test used when overzooming (most of the data tile is off screen). */
-        private function intersectsTile(parts:Array, k:Number, ox:Number, oy:Number, pad:Number):Boolean
+        /**
+         * Overzoomed tiles: marks in m_partVisible the parts (rings, line strings) whose bounding box touches
+         * the tile and returns false when none does. Some sources merge thousands of polygons in one feature
+         * (the buildings of OpenStreetMap Shortbread): drawing all of them in every tile cut from the same
+         * data is most of the cost. A ring that does not touch the tile cannot change its pixels.
+         */
+        private function selectParts(feature:MvtFeature, parts:Array, k:Number, ox:Number, oy:Number, pad:Number):Boolean
         {
+            var count:int = parts.length;
+            var visible:Vector.<Boolean> = m_partVisible;
+            if (visible.length < count)
+            {
+                visible.length = count;
+            }
+            if (count == 1)
+            {
+                // the box of the feature, already tested, is the box of its only part
+                visible[0] = true;
+                return true;
+            }
             var minX:Number = (-pad - ox) / k;
             var minY:Number = (-pad - oy) / k;
             var maxX:Number = (m_size + pad - ox) / k;
             var maxY:Number = (m_size + pad - oy) / k;
-            for (var p:int = 0; p < parts.length; p++)
+            var bounds:Vector.<Number> = feature.partBounds;
+            var any:Boolean = false;
+            for (var p:int = 0; p < count; p++)
             {
-                var part:Vector.<Number> = parts[p];
-                var n:int = part.length;
-                var left:Boolean = true;
-                var right:Boolean = true;
-                var above:Boolean = true;
-                var below:Boolean = true;
-                for (var i:int = 0; i < n; i += 2)
+                var b:int = p << 2;
+                var inside:Boolean = !(bounds[int(b + 2)] < minX || bounds[b] > maxX ||
+                                       bounds[int(b + 3)] < minY || bounds[int(b + 1)] > maxY);
+                visible[p] = inside;
+                if (inside)
                 {
-                    var x:Number = part[i];
-                    var y:Number = part[int(i + 1)];
-                    if (x >= minX) left = false;
-                    if (x <= maxX) right = false;
-                    if (y >= minY) above = false;
-                    if (y <= maxY) below = false;
-                }
-                if (!(left || right || above || below))
-                {
-                    return true;
+                    any = true;
                 }
             }
-            return false;
+            return any;
         }
 
         // ------------------------------------------------------------------
