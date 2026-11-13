@@ -107,7 +107,9 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
   other projections (levels taken from the service `tileInfo`) has not been tested.
 - **`wrapAround180`** is not supported (the world is not repeated across the antimeridian).
 - **Map rotation** (`mapRotation`) has not been tested.
-- Labels are recomputed at the end of a pan/zoom, not during the movement.
+- Labels are recomputed during a drag, with the button still held: every 0.3 s while the map moves (less
+  often when placing them is slow: at most an eighth of the time) and when it stays still for a moment.
+  During a zoom they are hidden and come back at the new scale.
 - CPU rendering, spread over several frames: a few milliseconds per tile with the Esri styles in a release
   build, more with styles that have hundreds of layers (e.g. OpenStreetMap Shortbread).
 - **Measure performance on release builds**: with a debug SWF or the debugger Flash Player the same code
