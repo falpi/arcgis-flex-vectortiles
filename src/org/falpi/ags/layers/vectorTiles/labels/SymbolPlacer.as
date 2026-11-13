@@ -187,14 +187,24 @@ package org.falpi.ags.layers.vectorTiles.labels
                 if (image != null)
                 {
                     var iconScale:Number = Number(layer.value("icon-size", z, f)) / m_sprites.getPixelRatio(name);
+                    var drawnImage:BitmapData = image;
+                    var drawnScale:Number = iconScale;
+                    if (m_sprites.isSdf(name))
+                    {
+                        // the alpha of an SDF icon is a distance field: drawn in icon-color at its final size
+                        var iconColor:StyleColor = layer.value("icon-color", z, f) as StyleColor;
+                        drawnImage = m_sprites.getSdfImage(name, iconColor != null ? iconColor.argb(1) : 0xff000000,
+                            Math.round(iconScale * 100) / 100);
+                        drawnScale = 1;
+                    }
                     var iconOffset:Array = layer.value("icon-offset", z, f) as Array;
                     var iconAnchor:String = String(layer.value("icon-anchor", z, f));
                     var w:Number = image.width * iconScale;
                     var h:Number = image.height * iconScale;
                     var ax:Number = iconAnchor.indexOf("left") >= 0 ? w / 2 : (iconAnchor.indexOf("right") >= 0 ? -w / 2 : 0);
                     var ay:Number = iconAnchor.indexOf("top") >= 0 ? h / 2 : (iconAnchor.indexOf("bottom") >= 0 ? -h / 2 : 0);
-                    L.icon = image;
-                    L.iconScale = iconScale;
+                    L.icon = drawnImage;
+                    L.iconScale = drawnScale;
                     L.iconWidth = w;
                     L.iconHeight = h;
                     // center of the icon relative to the anchor
@@ -352,65 +362,6 @@ package org.falpi.ags.layers.vectorTiles.labels
             return total;
         }
 
-        /** The line moved sideways by distance pixels (positive: to the right of its direction, y down). */
-        private static function offsetLine(line:Vector.<Number>, distance:Number):Vector.<Number>
-        {
-            var n:int = line.length;
-            var result:Vector.<Number> = new Vector.<Number>(n, true);
-            var previousX:Number = 0;
-            var previousY:Number = 0;
-            var hasPrevious:Boolean = false;
-            for (var i:int = 0; i < n; i += 2)
-            {
-                var nx:Number = 0;
-                var ny:Number = 0;
-                var hasNext:Boolean = false;
-                if (i + 3 < n)
-                {
-                    var dx:Number = line[i + 2] - line[i];
-                    var dy:Number = line[i + 3] - line[i + 1];
-                    var length:Number = Math.sqrt(dx * dx + dy * dy);
-                    if (length > 0)
-                    {
-                        nx = -dy / length;
-                        ny = dx / length;
-                        hasNext = true;
-                    }
-                }
-                var mx:Number = hasNext ? nx : previousX;
-                var my:Number = hasNext ? ny : previousY;
-                if (hasNext && hasPrevious)
-                {
-                    // miter between the two segments, limited where the line folds back
-                    mx = nx + previousX;
-                    my = ny + previousY;
-                    var m:Number = Math.sqrt(mx * mx + my * my);
-                    if (m > 0.001)
-                    {
-                        mx /= m;
-                        my /= m;
-                        var cosine:Number = Math.max(0.5, mx * nx + my * ny);
-                        mx /= cosine;
-                        my /= cosine;
-                    }
-                    else
-                    {
-                        mx = nx;
-                        my = ny;
-                    }
-                }
-                result[i] = line[i] + mx * distance;
-                result[i + 1] = line[i + 1] + my * distance;
-                if (hasNext)
-                {
-                    previousX = nx;
-                    previousY = ny;
-                    hasPrevious = true;
-                }
-            }
-            return result;
-        }
-
         /** Douglas-Peucker: the line without the vertices closer than tolerance to the simplified line. */
         private static function simplify(line:Vector.<Number>, tolerance:Number):Vector.<Number>
         {
@@ -525,7 +476,7 @@ package org.falpi.ags.layers.vectorTiles.labels
                 var parallel:Vector.<Number> = L.sideLines[sideKey] as Vector.<Number>;
                 if (parallel == null)
                 {
-                    parallel = L.sideLines[sideKey] = offsetLine(line, side);
+                    parallel = L.sideLines[sideKey] = TileRenderer.offsetLine(line, side);
                 }
                 var parallelLength:Number = lengthOf(parallel);
                 if (!(total > 0) || !(parallelLength > 0))

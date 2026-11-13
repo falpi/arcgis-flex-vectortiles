@@ -86,9 +86,10 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
 
 | Element | Status |
 |---|---|
-| `background`, `fill`, `line`, `circle` | Supported: colors, opacity, `fill-pattern`, `line-dasharray`, cap/join, `*-translate` |
+| `background`, `fill`, `line`, `circle` | Supported: colors, opacity, `fill-pattern`, `line-dasharray`, `line-offset`, cap/join, `*-translate` |
 | `line-pattern` | Supported: the image follows the line segment by segment (joins are not rounded) |
-| `symbol` | Labels (SDF glyphs with halo), text along lines, line wrapping, anchors, offsets, `text-transform`, sprite icons, rotation, collisions with priority by style order |
+| `symbol` | Labels (SDF glyphs with halo), text along lines, line wrapping, anchors, offsets, `text-transform`, sprite icons (SDF icons in `icon-color`), rotation, collisions with priority by style order |
+| Sprites | A single sheet or several (`sprite` as an array of `{id, url}`, images named `id:name`) |
 | Filters | Legacy syntax and expressions |
 | Functions | Legacy `stops` (zoom, property, zoom+property) and expressions (`match`, `case`, `interpolate`, `step`, `coalesce`, `let`/`var`, math, strings, colors…) |
 | `fill-extrusion` | Drawn flat (footprint) |

@@ -11,8 +11,10 @@ package org.falpi.ags.layers.vectorTiles.style
         public var layers:Vector.<StyleLayer> = new Vector.<StyleLayer>();
         /** Raw "sources" object of the style. */
         public var sources:Object = {};
-        /** Absolute sprite URL without extension, or null. */
+        /** Absolute sprite URL without extension, or null (the first sheet when the style has several). */
         public var spriteURL:String;
+        /** The sprite sheets: Array of {id, url} with absolute URLs ("default" for a single sheet), or null. */
+        public var sprites:Array;
         /** Absolute glyphs URL template ({fontstack}, {range}), or null. */
         public var glyphsURL:String;
         public var hasSymbols:Boolean = false;
@@ -35,6 +37,28 @@ package org.falpi.ags.layers.vectorTiles.style
             if (json.sprite is String)
             {
                 spriteURL = UrlUtil.resolve(baseURL, UrlUtil.normalizeMapbox(String(json.sprite)));
+                sprites = [{id: "default", url: spriteURL}];
+            }
+            else if (json.sprite is Array)
+            {
+                // several sheets: the images of a sheet other than "default" are named "id:image"
+                sprites = [];
+                for each (var sheet:Object in json.sprite)
+                {
+                    if (sheet != null && sheet.url is String)
+                    {
+                        sprites.push({id: sheet.id != null ? String(sheet.id) : "default",
+                                      url: UrlUtil.resolve(baseURL, UrlUtil.normalizeMapbox(String(sheet.url)))});
+                    }
+                }
+                if (sprites.length > 0)
+                {
+                    spriteURL = sprites[0].url;
+                }
+                else
+                {
+                    sprites = null;
+                }
             }
             if (json.glyphs is String)
             {

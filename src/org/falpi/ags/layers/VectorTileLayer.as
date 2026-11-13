@@ -550,10 +550,10 @@ package org.falpi.ags.layers
                 m_placer = new SymbolPlacer(m_glyphs, m_sprites);
                 setLoaded(true);
             };
-            if (definition.style.spriteURL != null)
+            if (definition.style.sprites != null)
             {
                 m_sprites = new SpriteAtlas();
-                m_sprites.load(definition.style.spriteURL, loader, finish);
+                m_sprites.load(definition.style.sprites, loader, finish);
             }
             else
             {

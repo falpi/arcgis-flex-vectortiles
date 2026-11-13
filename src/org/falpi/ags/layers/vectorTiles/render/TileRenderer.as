@@ -398,7 +398,10 @@ package org.falpi.ags.layers.vectorTiles.render
             var pOpacity:StyleProperty = layer.property("line-opacity");
             var pWidth:StyleProperty = layer.property("line-width");
             var pGap:StyleProperty = layer.property("line-gap-width");
-            var perFeature:Boolean = pColor.featureDependent || pOpacity.featureDependent || pWidth.featureDependent || pGap.featureDependent;
+            var pOffset:StyleProperty = layer.property("line-offset");
+            var hasOffset:Boolean = layer.has("line-offset");
+            var perFeature:Boolean = pColor.featureDependent || pOpacity.featureDependent || pWidth.featureDependent ||
+                pGap.featureDependent || (hasOffset && pOffset.featureDependent);
             var cap:String = String(layer.value("line-cap", m_zoom));
             var join:String = String(layer.value("line-join", m_zoom));
             var caps:String = cap == "round" ? CapsStyle.ROUND : (cap == "square" ? CapsStyle.SQUARE : CapsStyle.NONE);
@@ -415,12 +418,14 @@ package org.falpi.ags.layers.vectorTiles.render
             var color:StyleColor;
             var opacity:Number = 1;
             var width:Number = 1;
+            var offset:Number = 0;
             var groupAlpha:Number = 1;
             if (!perFeature)
             {
                 color = pColor.evaluate(m_zoom) as StyleColor;
                 opacity = pOpacity.evaluate(m_zoom);
                 width = lineWidth(pWidth.evaluate(m_zoom), pGap.evaluate(m_zoom));
+                offset = hasOffset ? Number(pOffset.evaluate(m_zoom)) : 0;
                 if (color == null || opacity <= 0 || color.a <= 0 || width <= 0)
                 {
                     return;
@@ -449,6 +454,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     color = pColor.evaluate(m_zoom, feature) as StyleColor;
                     opacity = pOpacity.evaluate(m_zoom, feature);
                     width = lineWidth(pWidth.evaluate(m_zoom, feature), pGap.evaluate(m_zoom, feature));
+                    offset = hasOffset ? Number(pOffset.evaluate(m_zoom, feature)) : 0;
                     if (color == null || opacity <= 0 || color.a <= 0 || width <= 0)
                     {
                         continue;
@@ -456,17 +462,33 @@ package org.falpi.ags.layers.vectorTiles.render
                     m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
                 }
                 var parts:Array = feature.loadGeometry();
-                if (clip && (outsideTile(feature, k, ox, oy, width + pad) || !selectParts(feature, parts, k, ox, oy, width + pad)))
+                if (!(offset == offset))
+                {
+                    offset = 0;
+                }
+                var reach:Number = width + pad + (offset < 0 ? -offset : offset);
+                if (clip && (outsideTile(feature, k, ox, oy, reach) || !selectParts(feature, parts, k, ox, oy, reach)))
                 {
                     continue;
                 }
+                var dk:Number = k;
+                var dox:Number = ox;
+                var doy:Number = oy;
+                if (offset != 0)
+                {
+                    // line-offset: the geometry is moved in pixels, then drawn as it is
+                    parts = offsetParts(parts, k, ox, oy, offset, clip);
+                    dk = 1;
+                    dox = 0;
+                    doy = 0;
+                }
                 if (dashes != null && dashes.length >= 2 && width * (Number(dashes[0]) + Number(dashes[1])) >= 1.5)
                 {
-                    drawDashedParts(parts, k, ox, oy, dashes, width, clip);
+                    drawDashedParts(parts, dk, dox, doy, dashes, width, clip);
                 }
                 else
                 {
-                    drawParts(parts, k, ox, oy, clip);
+                    drawParts(parts, dk, dox, doy, clip);
                 }
             }
             m_g.lineStyle();
@@ -585,6 +607,122 @@ package org.falpi.ags.layers.vectorTiles.render
             {
                 flush(groupAlpha);
             }
+        }
+
+        private static const NO_PART:Vector.<Number> = new Vector.<Number>(0, true);
+
+        /**
+         * The parts in pixels, moved sideways by offset pixels (line-offset). With selected, the parts
+         * not chosen by the last selectParts are left empty, so that the indexes still match.
+         */
+        private function offsetParts(parts:Array, k:Number, ox:Number, oy:Number, offset:Number, selected:Boolean):Array
+        {
+            var result:Array = new Array(parts.length);
+            for (var p:int = 0; p < parts.length; p++)
+            {
+                var part:Vector.<Number> = parts[p];
+                var n:int = part.length;
+                if (n < 4 || (selected && !m_partVisible[p]))
+                {
+                    result[p] = NO_PART;
+                    continue;
+                }
+                var pixels:Vector.<Number> = new Vector.<Number>(n, true);
+                for (var i:int = 0; i < n; i += 2)
+                {
+                    pixels[i] = part[i] * k + ox;
+                    pixels[int(i + 1)] = part[int(i + 1)] * k + oy;
+                }
+                result[p] = offsetLine(pixels, offset);
+            }
+            return result;
+        }
+
+        /**
+         * The line moved sideways by distance pixels: positive to the right of its direction (y down), so
+         * inside the exterior rings of polygons, which are clockwise on screen. Corners are mitered, with
+         * the miter limited where the line folds back; a closed ring stays closed.
+         */
+        public static function offsetLine(line:Vector.<Number>, distance:Number):Vector.<Number>
+        {
+            var n:int = line.length;
+            var result:Vector.<Number> = new Vector.<Number>(n, true);
+            var previousX:Number = 0;
+            var previousY:Number = 0;
+            var hasPrevious:Boolean = false;
+            var dx:Number;
+            var dy:Number;
+            var length:Number;
+            var closed:Boolean = n >= 8 && line[0] == line[n - 2] && line[1] == line[n - 1];
+            if (closed)
+            {
+                // the first corner joins the last segment
+                for (var j:int = n - 2; j >= 2 && !hasPrevious; j -= 2)
+                {
+                    dx = line[j] - line[j - 2];
+                    dy = line[j + 1] - line[j - 1];
+                    length = Math.sqrt(dx * dx + dy * dy);
+                    if (length > 0)
+                    {
+                        previousX = -dy / length;
+                        previousY = dx / length;
+                        hasPrevious = true;
+                    }
+                }
+            }
+            for (var i:int = 0; i < n; i += 2)
+            {
+                var nx:Number = 0;
+                var ny:Number = 0;
+                var hasNext:Boolean = false;
+                if (i + 3 < n)
+                {
+                    dx = line[i + 2] - line[i];
+                    dy = line[i + 3] - line[i + 1];
+                    length = Math.sqrt(dx * dx + dy * dy);
+                    if (length > 0)
+                    {
+                        nx = -dy / length;
+                        ny = dx / length;
+                        hasNext = true;
+                    }
+                }
+                var mx:Number = hasNext ? nx : previousX;
+                var my:Number = hasNext ? ny : previousY;
+                if (hasNext && hasPrevious)
+                {
+                    mx = nx + previousX;
+                    my = ny + previousY;
+                    var m:Number = Math.sqrt(mx * mx + my * my);
+                    if (m > 0.001)
+                    {
+                        mx /= m;
+                        my /= m;
+                        var cosine:Number = Math.max(0.5, mx * nx + my * ny);
+                        mx /= cosine;
+                        my /= cosine;
+                    }
+                    else
+                    {
+                        mx = nx;
+                        my = ny;
+                    }
+                }
+                result[i] = line[i] + mx * distance;
+                result[i + 1] = line[i + 1] + my * distance;
+                if (hasNext)
+                {
+                    previousX = nx;
+                    previousY = ny;
+                    hasPrevious = true;
+                }
+            }
+            if (closed)
+            {
+                result[n - 2] = result[0];
+                result[n - 1] = result[1];
+            }
+            return result;
         }
 
         private static function lineWidth(width:Number, gap:Number):Number
