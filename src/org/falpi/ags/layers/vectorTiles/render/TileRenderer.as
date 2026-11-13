@@ -14,8 +14,11 @@ package org.falpi.ags.layers.vectorTiles.render
     import flash.display.JointStyle;
     import flash.display.LineScaleMode;
     import flash.display.Shape;
+    import flash.filters.BitmapFilterQuality;
+    import flash.filters.BlurFilter;
     import flash.geom.ColorTransform;
     import flash.geom.Matrix;
+    import flash.geom.Point;
 
     /**
      * CPU renderer: draws the fill, line, circle and background layers of a
@@ -151,6 +154,53 @@ package org.falpi.ags.layers.vectorTiles.render
                 {
                     m_target.draw(m_shape, null, null, null, null, true);
                 }
+            }
+            m_g.clear();
+            m_vertices = 0;
+        }
+
+        private static const ORIGIN:Point = new Point(0, 0);
+
+        /**
+         * line-blur fades a line from its edge inward over blur + 1 pixels, so the opacity across it is
+         * min(1, (half width - distance from the middle) / (blur + 1)). A line of width w blurred by a box
+         * of width B has a ramp of B centered on its edge and min(1, w / B) in the middle: blurredWidth and
+         * blurBox choose w and B so that the two profiles end at the same edge with the same middle.
+         */
+        private static function blurredWidth(width:Number, blur:Number):Number
+        {
+            if (!(blur > 0))
+            {
+                return width;
+            }
+            var half:Number = width / 2;
+            var ramp:Number = blur + 1;
+            return half >= ramp ? width - ramp : 2 * half * half / (half + ramp);
+        }
+
+        private static function blurBox(width:Number, blur:Number):Number
+        {
+            var half:Number = width / 2;
+            var ramp:Number = blur + 1;
+            return half >= ramp ? ramp : 2 * half * ramp / (half + ramp);
+        }
+
+        /**
+         * line-blur: the lines drawn so far are blurred by a box of blur pixels and then
+         * blended. They are drawn with a margin, so that the blur does not fade at the tile borders.
+         */
+        private function flushBlurred(alpha:Number, blur:Number):void
+        {
+            if (m_vertices > 0)
+            {
+                var margin:int = Math.ceil(blur) + 2;
+                var side:int = Math.ceil(m_size) + margin * 2;
+                var layer:BitmapData = new BitmapData(side, side, true, 0);
+                layer.draw(m_shape, new Matrix(1, 0, 0, 1, margin, margin), null, null, null, true);
+                layer.applyFilter(layer, layer.rect, ORIGIN, new BlurFilter(blur, blur, BitmapFilterQuality.LOW));
+                m_target.draw(layer, new Matrix(1, 0, 0, 1, -margin, -margin),
+                    alpha < 1 ? new ColorTransform(1, 1, 1, alpha) : null, null, null, true);
+                layer.dispose();
             }
             m_g.clear();
             m_vertices = 0;
@@ -415,6 +465,17 @@ package org.falpi.ags.layers.vectorTiles.render
                 oy += Number(translate[1]);
             }
 
+            var blur:Number = layer.has("line-blur") ? Number(layer.property("line-blur").evaluate(m_zoom)) : 0;
+            if (!(blur >= 0.5))
+            {
+                blur = 0;
+            }
+            if (blur > 0)
+            {
+                // the layer is blurred on its own
+                flush(1); // before the line style is set: flush clears it
+            }
+
             var color:StyleColor;
             var opacity:Number = 1;
             var width:Number = 1;
@@ -436,10 +497,10 @@ package org.falpi.ags.layers.vectorTiles.render
                     groupAlpha = opacity;
                     opacity = 1;
                 }
-                m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
+                m_g.lineStyle(blurredWidth(width, blur), color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
             }
 
-            var pad:Number = 2;
+            var pad:Number = 2 + blur;
             var features:Vector.<MvtFeature> = filteredFeatures(layer, data);
             var count:int = features.length;
             for (var i:int = 0; i < count; i++)
@@ -459,7 +520,7 @@ package org.falpi.ags.layers.vectorTiles.render
                     {
                         continue;
                     }
-                    m_g.lineStyle(width, color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
+                    m_g.lineStyle(blurredWidth(width, blur), color.rgb, color.a * opacity, false, LineScaleMode.NORMAL, caps, joints, miterLimit);
                 }
                 var parts:Array = feature.loadGeometry();
                 if (!(offset == offset))
@@ -492,7 +553,11 @@ package org.falpi.ags.layers.vectorTiles.render
                 }
             }
             m_g.lineStyle();
-            if (groupAlpha < 1)
+            if (blur > 0)
+            {
+                flushBlurred(groupAlpha, blurBox(width, blur));
+            }
+            else if (groupAlpha < 1)
             {
                 flush(groupAlpha);
             }
@@ -565,6 +630,7 @@ package org.falpi.ags.layers.vectorTiles.render
                         continue;
                     }
                     var distance:Number = 0;
+                    var previousAngle:Number = NaN;
                     var x0:Number = part[0] * k + ox;
                     var y0:Number = part[1] * k + oy;
                     for (var j:int = 2; j < n; j += 2)
@@ -576,6 +642,7 @@ package org.falpi.ags.layers.vectorTiles.render
                         var length:Number = Math.sqrt(dx * dx + dy * dy);
                         if (length > 0)
                         {
+                            var angle:Number = Math.atan2(dy, dx);
                             var outside:Boolean = (x0 < -pad && x1 < -pad) || (y0 < -pad && y1 < -pad) ||
                                 (x0 > limit + pad && x1 > limit + pad) || (y0 > limit + pad && y1 > limit + pad);
                             if (!outside)
@@ -586,8 +653,33 @@ package org.falpi.ags.layers.vectorTiles.render
                                 matrix.identity();
                                 matrix.translate(-(distance % period) / scale, -pattern.height / 2);
                                 matrix.scale(scale, scale);
-                                matrix.rotate(Math.atan2(dy, dx));
+                                matrix.rotate(angle);
                                 matrix.translate(x0, y0);
+                                if (previousAngle == previousAngle)
+                                {
+                                    // join: only the wedge left open on the outside of the turn is filled,
+                                    // with the pattern as it continues on the next segment (a whole disc
+                                    // would draw the pattern twice where the segments already cover)
+                                    var turn:Number = angle - previousAngle;
+                                    if (turn > Math.PI) turn -= Math.PI * 2;
+                                    if (turn < -Math.PI) turn += Math.PI * 2;
+                                    if (turn > 0.05 || turn < -0.05)
+                                    {
+                                        // turning clockwise on screen (y down) opens the left side
+                                        var from:Number = previousAngle + (turn > 0 ? -Math.PI / 2 : Math.PI / 2);
+                                        var steps:int = Math.max(1, Math.ceil(Math.abs(turn) / 0.35));
+                                        g.beginBitmapFill(pattern, matrix, true, true);
+                                        g.moveTo(x0, y0);
+                                        for (var step:int = 0; step <= steps; step++)
+                                        {
+                                            var a:Number = from + turn * step / steps;
+                                            g.lineTo(x0 + Math.cos(a) * half, y0 + Math.sin(a) * half);
+                                        }
+                                        g.lineTo(x0, y0);
+                                        g.endFill();
+                                        m_vertices += steps + 3;
+                                    }
+                                }
                                 g.beginBitmapFill(pattern, matrix, true, true);
                                 g.moveTo(x0 + nx, y0 + ny);
                                 g.lineTo(x1 + nx, y1 + ny);
@@ -597,6 +689,7 @@ package org.falpi.ags.layers.vectorTiles.render
                                 m_vertices += 4;
                             }
                             distance += length;
+                            previousAngle = angle;
                         }
                         x0 = x1;
                         y0 = y1;

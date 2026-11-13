@@ -25,6 +25,18 @@ package org.falpi.ags.layers.vectorTiles.labels
         public var incomplete:Boolean = false;
         /** Number of symbols drawn by the last place() call. */
         public var placedCount:int = 0;
+        /** Halo width in pixels given to the labels whose style has none (0: as the style says). */
+        public var minimumHaloWidth:Number = 0;
+        /** Color (0xRRGGBB) of that halo; NaN: white behind dark text, black behind light text. */
+        public var minimumHaloColor:Number = NaN;
+        /** Opacity of that halo (multiplied by the text opacity). */
+        public var minimumHaloAlpha:Number = 0.8;
+
+        /** The halo settings the layouts were made with: they are made again when the settings change. */
+        private function get haloKey():String
+        {
+            return minimumHaloWidth + "|" + minimumHaloColor + "|" + minimumHaloAlpha;
+        }
 
         private var m_glyphs:GlyphManager;
         private var m_sprites:SpriteAtlas;
@@ -90,6 +102,11 @@ package org.falpi.ags.layers.vectorTiles.labels
             for each (var index:int in indices)
             {
                 var entries:Array = buckets[index];
+                var first:SymbolCandidate = entries[0] as SymbolCandidate;
+                if (first.layer.has("symbol-sort-key"))
+                {
+                    entries = sortByKey(entries, first.layer);
+                }
                 for (i = 0; i < entries.length; i += 2)
                 {
                     placeCandidate(entries[i] as SymbolCandidate, entries[i + 1]);
@@ -106,6 +123,29 @@ package org.falpi.ags.layers.vectorTiles.labels
             m_placedTexts = null;
         }
 
+        /**
+         * symbol-sort-key: inside a layer the symbols with the lower key are placed first, so they win the
+         * collisions (for example the most populated places). Equal keys keep the order of the tiles.
+         * @param entries candidate, tile, candidate, tile...
+         */
+        private function sortByKey(entries:Array, layer:StyleLayer):Array
+        {
+            var list:Array = [];
+            for (var i:int = 0; i < entries.length; i += 2)
+            {
+                var candidate:SymbolCandidate = entries[i] as SymbolCandidate;
+                var key:Number = Number(layer.value("symbol-sort-key", m_zoom, candidate.feature));
+                list.push({candidate: candidate, tile: entries[i + 1], key: key == key ? key : 0, position: i});
+            }
+            list.sortOn(["key", "position"], [Array.NUMERIC, Array.NUMERIC]);
+            var sorted:Array = [];
+            for each (var item:Object in list)
+            {
+                sorted.push(item.candidate, item.tile);
+            }
+            return sorted;
+        }
+
         // ------------------------------------------------------------------
         // layout
         // ------------------------------------------------------------------
@@ -113,14 +153,14 @@ package org.falpi.ags.layers.vectorTiles.labels
         private function layoutOf(c:SymbolCandidate):Object
         {
             var L:Object = c.layout;
-            if (L != null && L.zoom == m_zoom && !L.pendingGlyphs)
+            if (L != null && L.zoom == m_zoom && !L.pendingGlyphs && L.halo == haloKey)
             {
                 return L;
             }
             var layer:StyleLayer = c.layer;
             var f:MvtFeature = c.feature;
             var z:Number = m_zoom;
-            L = {zoom: z, pendingGlyphs: false};
+            L = {zoom: z, pendingGlyphs: false, halo: haloKey};
             c.layout = L;
 
             // ---- text
@@ -167,6 +207,25 @@ package org.falpi.ags.layers.vectorTiles.labels
                             L.textColor = color != null ? color.argb(opacity) : 0xff000000;
                             L.haloColor = halo != null ? halo.argb(opacity) : 0;
                             L.haloWidth = Math.round(Number(layer.value("text-halo-width", z, f)) * 4) / 4;
+                            if (minimumHaloWidth > 0 && !(L.haloWidth > 0 && (uint(L.haloColor) >>> 24) > 0))
+                            {
+                                // no halo in the style: the given color, or white behind dark text and black
+                                // behind light text
+                                var haloRGB:uint;
+                                if (minimumHaloColor == minimumHaloColor)
+                                {
+                                    haloRGB = uint(minimumHaloColor) & 0xffffff;
+                                }
+                                else
+                                {
+                                    var rgb:uint = uint(L.textColor);
+                                    var luminance:Number = (((rgb >> 16) & 255) * 0.299 + ((rgb >> 8) & 255) * 0.587 + (rgb & 255) * 0.114) / 255;
+                                    haloRGB = luminance < 0.6 ? 0xffffff : 0x000000;
+                                }
+                                var haloAlpha:Number = Math.max(0, Math.min(1, minimumHaloAlpha)) * Math.max(0, Math.min(1, opacity));
+                                L.haloColor = (uint(Math.round(255 * haloAlpha)) << 24) | haloRGB;
+                                L.haloWidth = minimumHaloWidth;
+                            }
                             L.haloBlur = Number(layer.value("text-halo-blur", z, f));
                             L.textPadding = Number(layer.value("text-padding", z, f));
                             L.textAllowOverlap = Boolean(layer.value("text-allow-overlap", z, f));

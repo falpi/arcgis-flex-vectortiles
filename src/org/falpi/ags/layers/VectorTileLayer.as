@@ -313,6 +313,77 @@ package org.falpi.ags.layers
             }
         }
 
+        private var m_minimumHaloWidth:Number = 1.5;
+        private var m_minimumHaloColor:Number = NaN;
+        private var m_minimumHaloAlpha:Number = 0.8;
+
+        /**
+         * Halo width in pixels given to the labels whose style has none, to keep them readable on busy
+         * backgrounds (default 1.5). 0 draws those labels as the style says.
+         */
+        public function get minimumHaloWidth():Number
+        {
+            return m_minimumHaloWidth;
+        }
+
+        public function set minimumHaloWidth(value:Number):void
+        {
+            if (!(value > 0))
+            {
+                value = 0;
+            }
+            if (m_minimumHaloWidth != value)
+            {
+                m_minimumHaloWidth = value;
+                applyHalo();
+            }
+        }
+
+        /**
+         * Color of that halo as 0xRRGGBB. NaN (the default) picks it for each label: white behind dark
+         * text, black behind light text.
+         */
+        public function get minimumHaloColor():Number
+        {
+            return m_minimumHaloColor;
+        }
+
+        public function set minimumHaloColor(value:Number):void
+        {
+            if (String(m_minimumHaloColor) != String(value))
+            {
+                m_minimumHaloColor = value;
+                applyHalo();
+            }
+        }
+
+        /** Opacity of that halo, 0 to 1 (default 0.8). */
+        public function get minimumHaloAlpha():Number
+        {
+            return m_minimumHaloAlpha;
+        }
+
+        public function set minimumHaloAlpha(value:Number):void
+        {
+            value = value > 1 ? 1 : (value > 0 ? value : 0);
+            if (m_minimumHaloAlpha != value)
+            {
+                m_minimumHaloAlpha = value;
+                applyHalo();
+            }
+        }
+
+        private function applyHalo():void
+        {
+            if (m_placer != null)
+            {
+                m_placer.minimumHaloWidth = m_minimumHaloWidth;
+                m_placer.minimumHaloColor = m_minimumHaloColor;
+                m_placer.minimumHaloAlpha = m_minimumHaloAlpha;
+                requestLabels();
+            }
+        }
+
         /** Maximum number of parallel HTTP requests. */
         public var maxConnections:int = 6;
 
@@ -548,6 +619,9 @@ package org.falpi.ags.layers
                 m_glyphs.glyphsURL = definition.style.glyphsURL;
                 m_glyphs.onGlyphsLoaded = requestLabels;
                 m_placer = new SymbolPlacer(m_glyphs, m_sprites);
+                m_placer.minimumHaloWidth = m_minimumHaloWidth;
+                m_placer.minimumHaloColor = m_minimumHaloColor;
+                m_placer.minimumHaloAlpha = m_minimumHaloAlpha;
                 setLoaded(true);
             };
             if (definition.style.sprites != null)

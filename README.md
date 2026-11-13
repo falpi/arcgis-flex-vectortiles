@@ -51,6 +51,9 @@ Complete example with a basemap selector: [examples/VectorTileDemo.mxml](example
 | `style` | Mapbox GL style (Object or JSON string) that replaces the one published at the URL. |
 | `tilingScheme` | `arcgis` (default): the `Map` gets the 24 levels of the classic raster basemaps, so `map.level` and the scales stay the same as before. `service`: levels of the vector service (512 px tiles, one level fewer at the same scale). |
 | `labelsVisible` | Shows or hides labels and icons. |
+| `minimumHaloWidth` | Halo width in pixels given to the labels whose style has none, to keep them readable on busy backgrounds (default 1.5). 0 draws them as the style says. |
+| `minimumHaloColor` | Color of that halo as `0xRRGGBB`. Not set (the default): white behind dark text, black behind light text. |
+| `minimumHaloAlpha` | Opacity of that halo, 0 to 1 (default 0.8). |
 | `maxConnections` | Parallel HTTP requests (default 6). |
 | `styleDefinition` | The parsed style, read-only. |
 | `diagnostics` | Shows a box at the top left of the map with the player version, the real frame rate, the tiles being loaded and where the time of the last update went. Meant for reporting performance problems. |
@@ -86,16 +89,16 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
 
 | Element | Status |
 |---|---|
-| `background`, `fill`, `line`, `circle` | Supported: colors, opacity, `fill-pattern`, `line-dasharray`, `line-offset`, cap/join, `*-translate` |
-| `line-pattern` | Supported: the image follows the line segment by segment (joins are not rounded) |
-| `symbol` | Labels (SDF glyphs with halo), text along lines, line wrapping, anchors, offsets, `text-transform`, sprite icons (SDF icons in `icon-color`), rotation, collisions with priority by style order |
+| `background`, `fill`, `line`, `circle` | Supported: colors, opacity, `fill-pattern`, `line-dasharray`, `line-offset`, `line-blur`, cap/join, `*-translate` |
+| `line-pattern` | Supported: the image follows the line segment by segment, with the joins filled |
+| `symbol` | Labels (SDF glyphs with halo), text along lines, line wrapping, anchors, offsets, `text-transform`, sprite icons (SDF icons in `icon-color`), rotation, collisions with priority by style order and `symbol-sort-key` |
 | Sprites | A single sheet or several (`sprite` as an array of `{id, url}`, images named `id:name`) |
 | Filters | Legacy syntax and expressions |
 | Functions | Legacy `stops` (zoom, property, zoom+property) and expressions (`match`, `case`, `interpolate`, `step`, `coalesce`, `let`/`var`, math, strings, colors…) |
 | `fill-extrusion` | Drawn flat (footprint) |
 | `line-gap-width` | Approximated with a single line |
 | `raster`, `hillshade`, `heatmap`, terrain, sky | Ignored |
-| `icon-text-fit`, `text-variable-anchor`, `symbol-sort-key` | Not implemented |
+| `icon-text-fit`, `text-variable-anchor` | Not implemented (not used by the Esri, OpenFreeMap and VersaTiles styles) |
 | Complex scripts (Arabic, Indic, bidi) | Not supported (Latin, Greek, Cyrillic, CJK are) |
 
 ## Known limitations and untested areas
