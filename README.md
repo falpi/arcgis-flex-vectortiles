@@ -118,8 +118,9 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
 - **Measure performance on release builds**: with a debug SWF or the debugger Flash Player the same code
   runs many times slower (about 30 times in our measurements).
 - Esri **Basemap Styles service v2** (`basemapstyles-api.arcgis.com`, with API key) has not been tested;
-  tested: the `World_Basemap_v2` VectorTileServer and Esri's public items (Street, Navigation,
-  Street Night, Light/Dark Gray Canvas with their reference layers).
+  tested: the `World_Basemap_v2` VectorTileServer, Esri's public items (Street, Navigation,
+  Street Night, Topographic, OpenStreetMap, Light/Dark Gray Canvas with their reference layers),
+  OpenStreetMap Shortbread (VersaTiles styles) and OpenFreeMap.
 - Esri's "Canvas" basemaps have their labels in a separate item ("Reference"): add it
   as a second `VectorTileLayer` above the base (see the example).
 
