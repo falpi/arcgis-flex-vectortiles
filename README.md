@@ -53,6 +53,8 @@ Complete example with a basemap selector: [examples/VectorTileDemo.mxml](example
 | `labelsVisible` | Shows or hides labels and icons. |
 | `maxConnections` | Parallel HTTP requests (default 6). |
 | `styleDefinition` | The parsed style, read-only. |
+| `diagnostics` | Shows a box at the top left of the map with the player version, the real frame rate, the tiles being loaded and where the time of the last update went. Meant for reporting performance problems. |
+| `updateTimings` | The timings of the last completed update as text (tiles, drawing, label placement, total), read-only. |
 
 Inherited from `TiledMapServiceLayer`/`Layer`: `tileInfo`, `fullExtent`, `initialExtent`,
 `spatialReference`, `copyright` (taken from the service), `visible`, `alpha`, `minScale`, `maxScale`…
@@ -85,6 +87,7 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
 | Element | Status |
 |---|---|
 | `background`, `fill`, `line`, `circle` | Supported: colors, opacity, `fill-pattern`, `line-dasharray`, cap/join, `*-translate` |
+| `line-pattern` | Supported: the image follows the line segment by segment (joins are not rounded) |
 | `symbol` | Labels (SDF glyphs with halo), text along lines, line wrapping, anchors, offsets, `text-transform`, sprite icons, rotation, collisions with priority by style order |
 | Filters | Legacy syntax and expressions |
 | Functions | Legacy `stops` (zoom, property, zoom+property) and expressions (`match`, `case`, `interpolate`, `step`, `coalesce`, `let`/`var`, math, strings, colors…) |
@@ -101,7 +104,10 @@ them even without a policy, whereas data (style, metadata, PBF tiles, glyphs, sp
 - **`wrapAround180`** is not supported (the world is not repeated across the antimeridian).
 - **Map rotation** (`mapRotation`) has not been tested.
 - Labels are recomputed at the end of a pan/zoom, not during the movement.
-- CPU rendering: 20–100 ms per tile, spread over several frames.
+- CPU rendering, spread over several frames: a few milliseconds per tile with the Esri styles in a release
+  build, more with styles that have hundreds of layers (e.g. OpenStreetMap Shortbread).
+- **Measure performance on release builds**: with a debug SWF or the debugger Flash Player the same code
+  runs many times slower (about 30 times in our measurements).
 - Esri **Basemap Styles service v2** (`basemapstyles-api.arcgis.com`, with API key) has not been tested;
   tested: the `World_Basemap_v2` VectorTileServer and Esri's public items (Street, Navigation,
   Street Night, Light/Dark Gray Canvas with their reference layers).
