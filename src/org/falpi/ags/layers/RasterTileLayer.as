@@ -1,6 +1,7 @@
 package org.falpi.ags.layers
 {
     import org.falpi.ags.layers.supportClasses.RasterContent;
+    import org.falpi.ags.layers.supportClasses.RasterTileLayerDefaults;
     import org.falpi.ags.layers.supportClasses.tile_internal;
 
     use namespace tile_internal;
@@ -88,23 +89,48 @@ package org.falpi.ags.layers
         }
 
         /**
+         * The defaults of the raster basemaps (HybridTileLayer included, when it shows one): the settings of every
+         * tile layer for the raster basemaps only, and resampling (see TileLayerDefaults).
+         */
+        public static function get defaults():RasterTileLayerDefaults
+        {
+            return RasterContent.DEFAULTS;
+        }
+
+        private var m_resampling:Boolean = true;
+        private var m_resamplingSet:Boolean = false;
+
+        /**
          * Whether a tile that does not exist is replaced by the part of a tile of a lower level that covers it,
          * enlarged (default true), as the resampling of the ArcGIS Maps SDK for JavaScript. "esri": the services
          * with the Tilemap capability say which tiles exist, so their "Map data not yet available" images are
-         * never shown. Every format: a tile that cannot be loaded is replaced the same way.
+         * never shown. Every format: a tile that cannot be loaded is replaced the same way. Not set:
+         * RasterTileLayer.defaults. Reads the value in use.
          */
         public function get resampling():Boolean
         {
-            return m_raster.resampling;
+            if (m_resamplingSet)
+            {
+                return m_resampling;
+            }
+            var option:* = layerOption("resampling");
+            return option is Boolean ? Boolean(option) : RasterContent.DEFAULTS.resampling;
         }
 
         public function set resampling(value:Boolean):void
         {
-            if (m_raster.resampling != value)
+            var before:Boolean = resampling;
+            m_resampling = value;
+            m_resamplingSet = true;
+            if (before != value)
             {
-                m_raster.resampling = value;
                 invalidateContent();
             }
+        }
+
+        override protected function prepareContent():void
+        {
+            m_raster.resampling = resampling;
         }
     }
 }

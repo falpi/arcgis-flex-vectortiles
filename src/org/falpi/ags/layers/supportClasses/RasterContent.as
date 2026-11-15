@@ -46,6 +46,14 @@ package org.falpi.ags.layers.supportClasses
      */
     public class RasterContent extends TileContent
     {
+        /** The defaults of the raster basemaps (RasterTileLayer.defaults). */
+        public static const DEFAULTS:RasterTileLayerDefaults = new RasterTileLayerDefaults();
+
+        override public function get defaults():TileLayerDefaults
+        {
+            return DEFAULTS;
+        }
+
         public static const FORMAT_ESRI:String = "esri";
         public static const FORMAT_TILED:String = "tiled";
 

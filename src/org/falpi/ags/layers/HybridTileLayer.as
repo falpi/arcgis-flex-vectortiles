@@ -53,11 +53,11 @@ package org.falpi.ags.layers
      * attributes, as <code>description</code>, are ignored.</p>
      *
      * <p>One rule decides every setting, from the strongest: the property set on the layer (in MXML or by code),
-     * the option of the layer chosen from layerMap, the static default (<code>defaultTransport</code>,
-     * <code>defaultProxyTiles</code>, <code>defaultResampling</code>, <code>defaultTileCacheSize</code>,
-     * <code>defaultProxyURL</code>..., set once by
-     * the application at startup),
-     * the default of the library.</p>
+     * the option of the layer chosen from layerMap, the defaults of the kind of basemap shown
+     * (<code>RasterTileLayer.defaults</code> or <code>VectorTileLayer.defaults</code>), the defaults of every tile
+     * layer (<code>AbstractTileLayer.defaults</code>, which start with those of the library). The defaults of this
+     * class are only the criteria that choose the basemap: <code>defaultLayerMap</code>,
+     * <code>defaultLayerType</code>, <code>defaultLayerFormat</code>.</p>
      */
     public class HybridTileLayer extends AbstractTileLayer
     {
@@ -78,20 +78,6 @@ package org.falpi.ags.layers
         public static var defaultLayerFormat:String;
         /** Default of layerMap. */
         public static var defaultLayerMap:Object;
-        /** Default of proxyURL. */
-        public static var defaultProxyURL:String;
-        /** Default of token. */
-        public static var defaultToken:String;
-        /** Default of proxyTiles. */
-        public static var defaultProxyTiles:Boolean = true;
-        /** Default of transport ("flash" when not set). */
-        public static var defaultTransport:String;
-        /** Default of updateMapLods. */
-        public static var defaultUpdateMapLods:Boolean = false;
-        /** Default of resampling. */
-        public static var defaultResampling:Boolean = true;
-        /** Default of tileCacheSize, in megabytes. */
-        public static var defaultTileCacheSize:Number = 64;
 
         private var m_vector:VectorContent;
         private var m_raster:RasterContent;
@@ -192,7 +178,7 @@ package org.falpi.ags.layers
         }
 
         // ------------------------------------------------------------------
-        // properties of AbstractTileLayer, with their static defaults
+        // url: it takes the place of layerMap
         // ------------------------------------------------------------------
 
         private var m_hybridURL:String;
@@ -217,127 +203,19 @@ package org.falpi.ags.layers
             }
         }
 
-        private var m_hybridProxyURL:String;
+        /** The options of the layer chosen from layerMap (transport, proxyTiles, resampling, tileCacheSize...). */
+        private var m_activeOptions:Object;
 
-        /** The proxy page. Not set (null): defaultProxyURL; an empty string: no proxy. */
-        override public function get proxyURL():String
+        /** The options of the layer chosen from layerMap, for the settings of AbstractTileLayer and resampling. */
+        override protected function layerOption(name:String):*
         {
-            return m_hybridProxyURL;
-        }
-
-        override public function set proxyURL(value:String):void
-        {
-            if (m_hybridProxyURL != value)
+            var value:* = m_activeOptions != null ? m_activeOptions[name] : undefined;
+            if (value === null || value === undefined || (value is Number && isNaN(value)) ||
+                (value is String && String(value).length == 0))
             {
-                m_hybridProxyURL = value;
-                invalidateConfiguration();
+                return undefined;
             }
-        }
-
-        private var m_hybridToken:String;
-
-        /** Token or API key appended to every request. Not set (null): defaultToken; an empty string: none. */
-        override public function get token():String
-        {
-            return m_hybridToken;
-        }
-
-        override public function set token(value:String):void
-        {
-            if (m_hybridToken != value)
-            {
-                m_hybridToken = value;
-                invalidateConfiguration();
-            }
-        }
-
-        private var m_hybridProxyTiles:Boolean = true;
-        private var m_proxyTilesSet:Boolean = false;
-        /** The option of the layer chosen from layerMap (null when it has none). */
-        private var m_mapProxyTiles:Object;
-
-        /**
-         * Whether the tiles go through the proxy too (see AbstractTileLayer). Not set: the option of the layer
-         * chosen from layerMap, then defaultProxyTiles. Reads the value in use.
-         */
-        override public function get proxyTiles():Boolean
-        {
-            if (m_proxyTilesSet)
-            {
-                return m_hybridProxyTiles;
-            }
-            return m_mapProxyTiles != null ? Boolean(m_mapProxyTiles) : defaultProxyTiles;
-        }
-
-        override public function set proxyTiles(value:Boolean):void
-        {
-            m_hybridProxyTiles = value;
-            m_proxyTilesSet = true;
-            invalidateConfiguration();
-        }
-
-        private var m_hybridTransport:String;
-        /** The option of the layer chosen from layerMap (null when it has none). */
-        private var m_mapTransport:String;
-
-        [Inspectable(enumeration="flash,javascript")]
-        /**
-         * Who makes the requests (see AbstractTileLayer). Not set (null): the option of the layer chosen from
-         * layerMap, then defaultTransport, then "flash". Reads the value in use.
-         */
-        override public function get transport():String
-        {
-            return nonEmpty(m_hybridTransport, nonEmpty(m_mapTransport, defaultTransport, null), TRANSPORT_FLASH);
-        }
-
-        override public function set transport(value:String):void
-        {
-            if (m_hybridTransport != value)
-            {
-                m_hybridTransport = value;
-                invalidateConfiguration();
-            }
-        }
-
-        private var m_updateMapLodsSet:Boolean = false;
-
-        /** Whether the Map takes the levels of this layer (see AbstractTileLayer). Not set: defaultUpdateMapLods. */
-        override public function get updateMapLods():Boolean
-        {
-            return m_updateMapLodsSet ? super.updateMapLods : defaultUpdateMapLods;
-        }
-
-        override public function set updateMapLods(value:Boolean):void
-        {
-            m_updateMapLodsSet = true;
-            super.updateMapLods = value;
-        }
-
-        private var m_hybridTileCacheSize:Number = NaN;
-        /** The option of the layer chosen from layerMap (NaN when it has none). */
-        private var m_mapTileCacheSize:Number = NaN;
-
-        /**
-         * Megabytes for the tiles that left the view (see AbstractTileLayer). Not set: the option of the layer
-         * chosen from layerMap, then defaultTileCacheSize. Reads the value in use.
-         */
-        override public function get tileCacheSize():Number
-        {
-            if (!isNaN(m_hybridTileCacheSize))
-            {
-                return m_hybridTileCacheSize;
-            }
-            if (!isNaN(m_mapTileCacheSize))
-            {
-                return m_mapTileCacheSize;
-            }
-            return isNaN(defaultTileCacheSize) ? 64 : defaultTileCacheSize;
-        }
-
-        override public function set tileCacheSize(value:Number):void
-        {
-            m_hybridTileCacheSize = value;
-            super.tileCacheSize = value;
+            return value;
         }
 
         // ------------------------------------------------------------------
@@ -388,12 +266,11 @@ package org.falpi.ags.layers
 
         private var m_hybridResampling:Boolean = true;
         private var m_resamplingSet:Boolean = false;
-        /** The option of the layer chosen from layerMap (null when it has none). */
-        private var m_mapResampling:Object;
 
         /**
          * Whether a missing raster tile shows the enlarged part of a tile of a lower level (see RasterTileLayer).
-         * Not set: the option of the layer chosen from layerMap, then defaultResampling. Reads the value in use.
+         * Not set: the option of the layer chosen from layerMap, then RasterTileLayer.defaults. Reads the value
+         * in use.
          */
         public function get resampling():Boolean
         {
@@ -401,7 +278,8 @@ package org.falpi.ags.layers
             {
                 return m_hybridResampling;
             }
-            return m_mapResampling != null ? Boolean(m_mapResampling) : defaultResampling;
+            var option:* = layerOption("resampling");
+            return option is Boolean ? Boolean(option) : RasterContent.DEFAULTS.resampling;
         }
 
         public function set resampling(value:Boolean):void
@@ -623,11 +501,9 @@ package org.falpi.ags.layers
             m_activeType = type;
             m_activeFormat = format;
             m_activeURL = target;
-            // every setting: the property of the layer, then the option of layerMap, then the static default
-            m_mapTransport = options.transport is String ? String(options.transport) : null;
-            m_mapProxyTiles = options.proxyTiles is Boolean ? options.proxyTiles : null;
-            m_mapResampling = options.resampling is Boolean ? options.resampling : null;
-            m_mapTileCacheSize = options.tileCacheSize is Number ? Number(options.tileCacheSize) : NaN;
+            // every setting: the property of the layer, then the option of layerMap (layerOption), then the
+            // static default
+            m_activeOptions = options;
 
             if (type == TYPE_RASTER)
             {
@@ -644,23 +520,14 @@ package org.falpi.ags.layers
             {
                 setContent(m_vector);
             }
-            super.proxyURL = m_hybridProxyURL != null ? m_hybridProxyURL : defaultProxyURL;
-            super.token = m_hybridToken != null ? m_hybridToken : defaultToken;
-            super.proxyTiles = proxyTiles;
-            super.transport = transport;
-            // the cache within the size in use
-            super.tileCacheSize = tileCacheSize;
             super.url = target;
             // a new configuration is loaded again even when the URL is the same (format, options)
-            invalidateContent();
+            layerOptionsChanged();
         }
 
         private function fail(message:String):void
         {
-            m_mapTransport = null;
-            m_mapProxyTiles = null;
-            m_mapResampling = null;
-            m_mapTileCacheSize = NaN;
+            m_activeOptions = null;
             m_activeType = null;
             m_activeFormat = null;
             m_activeURL = null;

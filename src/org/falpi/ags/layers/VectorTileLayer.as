@@ -1,6 +1,7 @@
 package org.falpi.ags.layers
 {
     import org.falpi.ags.layers.supportClasses.VectorContent;
+    import org.falpi.ags.layers.supportClasses.VectorTileLayerDefaults;
     import org.falpi.ags.layers.vectorTiles.style.Style;
 
     /**
@@ -35,6 +36,16 @@ package org.falpi.ags.layers
             super(url, proxyURL, token);
             m_vector = new VectorContent();
             setContent(m_vector);
+        }
+
+        /**
+         * The defaults of the vector basemaps (HybridTileLayer included, when it shows one): the settings of every
+         * tile layer for the vector basemaps only, and tilingScheme, labelsVisible and the minimum halo (see
+         * TileLayerDefaults).
+         */
+        public static function get defaults():VectorTileLayerDefaults
+        {
+            return VectorContent.DEFAULTS;
         }
 
         /**

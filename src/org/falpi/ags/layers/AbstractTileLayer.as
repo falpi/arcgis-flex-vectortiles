@@ -31,6 +31,7 @@ package org.falpi.ags.layers
 
     import org.falpi.ags.layers.supportClasses.TileCache;
     import org.falpi.ags.layers.supportClasses.TileContent;
+    import org.falpi.ags.layers.supportClasses.TileLayerDefaults;
     import org.falpi.ags.layers.supportClasses.tile_internal;
     import org.falpi.ags.net.JavaScriptTransport;
     import org.falpi.ags.net.ResourceLoader;
@@ -164,15 +165,70 @@ package org.falpi.ags.layers
             }
         }
 
+        // ------------------------------------------------------------------
+        // defaults: what an application sets once, at startup, for its tile layers (see TileLayerDefaults)
+        // ------------------------------------------------------------------
+
+        /**
+         * The defaults of every tile layer (see TileLayerDefaults): it starts with the defaults of the library.
+         * RasterTileLayer.defaults and VectorTileLayer.defaults set them for one kind of basemap.
+         */
+        public static function get defaults():TileLayerDefaults
+        {
+            return TileLayerDefaults.shared;
+        }
+
+        /** The default of a setting: the object of the kind of basemap shown, then AbstractTileLayer.defaults. */
+        private function defaultValue(name:String):*
+        {
+            var kind:TileLayerDefaults = m_content != null ? m_content.defaults : null;
+            return (kind != null ? kind : TileLayerDefaults.shared).getValue(name);
+        }
+
+        /**
+         * A value that a subclass takes from its own configuration (the layer chosen from the map of basemaps, for
+         * HybridTileLayer): one rule decides every shared setting, from the strongest, the property set on the
+         * layer, this option, the defaults of the kind of basemap, the defaults of every tile layer. undefined: no option (the base has
+         * none).
+         */
+        protected function layerOption(name:String):*
+        {
+            return undefined;
+        }
+
+        /**
+         * Called by a subclass when its options changed (see layerOption): the cache keeps within the size in use,
+         * the Map takes the levels if it should, and the basemap is loaded again.
+         */
+        protected function layerOptionsChanged():void
+        {
+            m_cache.trim(cacheLimit());
+            scheduleMapLods();
+            invalidateContent();
+        }
+
+        /** A String option, null when there is none (or it is empty). */
+        private function stringOption(name:String):String
+        {
+            var value:* = layerOption(name);
+            return value is String && String(value).length > 0 ? String(value) : null;
+        }
+
         private var m_proxyURL:String;
 
         /**
          * The proxy page: requests are sent as proxyURL?targetURL. Needed by Flash in the browser whenever a server
-         * has no crossdomain.xml, which is the case of the Esri basemap servers (for data, not for images).
+         * has no crossdomain.xml, which is the case of the Esri basemap servers (for data, not for images). Not set
+         * (null): the defaults (see TileLayerDefaults); an empty string: no proxy. Reads the value in use.
          */
         public function get proxyURL():String
         {
-            return m_proxyURL;
+            if (m_proxyURL != null)
+            {
+                return m_proxyURL;
+            }
+            var option:String = stringOption("proxyURL");
+            return option != null ? option : defaultValue("proxyURL") as String;
         }
 
         public function set proxyURL(value:String):void
@@ -189,11 +245,17 @@ package org.falpi.ags.layers
         /**
          * Token or API key (ArcGIS token, Mapbox access token, MapTiler key...), appended to the requests sent to the
          * site of url (its registered domain: www.arcgis.com and basemaps.arcgis.com are the same site). Requests to
-         * other sites, such as fonts or sprites of a style kept elsewhere, go without it.
+         * other sites, such as fonts or sprites of a style kept elsewhere, go without it. Not set (null): the
+         * defaults (see TileLayerDefaults); an empty string: none. Reads the value in use.
          */
         public function get token():String
         {
-            return m_token;
+            if (m_token != null)
+            {
+                return m_token;
+            }
+            var option:String = stringOption("token");
+            return option != null ? option : defaultValue("token") as String;
         }
 
         public function set token(value:String):void
@@ -223,47 +285,71 @@ package org.falpi.ags.layers
         }
 
         private var m_proxyTiles:Boolean = true;
+        private var m_proxyTilesSet:Boolean = false;
 
         /**
          * Whether the tiles go through the proxy too (true, the default, as the Esri layers do). False sends them
          * straight to their server, while metadata, styles, glyphs and sprites still go through the proxy. With
          * the Flash transport the raster tiles, which are images, are always shown; vector tiles are data, read only
-         * from servers with a valid crossdomain.xml (a fault event says when it is missing).
+         * from servers with a valid crossdomain.xml (a fault event says when it is missing). Not set: the
+         * defaults (see TileLayerDefaults). Reads the value in use.
          */
         public function get proxyTiles():Boolean
         {
-            return m_proxyTiles;
+            if (m_proxyTilesSet)
+            {
+                return m_proxyTiles;
+            }
+            var option:* = layerOption("proxyTiles");
+            return option is Boolean ? Boolean(option) : defaultValue("proxyTiles") != false;
         }
 
         public function set proxyTiles(value:Boolean):void
         {
-            if (m_proxyTiles != value)
+            var before:Boolean = proxyTiles;
+            m_proxyTiles = value;
+            m_proxyTilesSet = true;
+            if (before != value)
             {
-                m_proxyTiles = value;
                 invalidateContent();
             }
         }
 
-        private var m_transport:String = TRANSPORT_FLASH;
+        private var m_transport:String;
 
         [Inspectable(enumeration="flash,javascript", defaultValue="flash")]
         /**
          * Who makes the requests: "flash" (default) or "javascript", the page that hosts the SWF, through
          * ExternalInterface (fetch: CORS applies instead of the crossdomain.xml policies of Flash). Independent of
          * the proxy, which applies the same way. With "javascript" every request goes through the page: when it
-         * cannot (no ExternalInterface) the layer does not load.
+         * cannot (no ExternalInterface) the layer does not load. Not set (null): the defaults (see TileLayerDefaults).
+         * Reads the value in use.
          */
         public function get transport():String
         {
-            return m_transport;
+            if (m_transport != null && m_transport.length > 0)
+            {
+                return m_transport;
+            }
+            var option:String = stringOption("transport");
+            if (option != null)
+            {
+                return option;
+            }
+            var value:String = defaultValue("transport") as String;
+            return value != null && value.length > 0 ? value : TRANSPORT_FLASH;
         }
 
         public function set transport(value:String):void
         {
             if (m_transport != value)
             {
+                var before:String = transport;
                 m_transport = value;
-                invalidateContent();
+                if (transport != before)
+                {
+                    invalidateContent();
+                }
             }
         }
 
@@ -284,17 +370,27 @@ package org.falpi.ags.layers
             }
         }
 
-        private var m_tileCacheSize:Number = 64;
+        private var m_tileCacheSize:Number = NaN;
 
         /**
          * Megabytes of memory for the drawn tiles that left the view (default 64): when the view comes back to them
          * they are shown at once, without requests, decoding or drawing. The least recently seen are dropped first.
          * 0: no cache. Emptied by refresh, by a new url, by a new basemap, when the layer is hidden (visible false)
-         * and when it leaves the map.
+         * and when it leaves the map. Not set (NaN): the defaults (see TileLayerDefaults). Reads the value in use.
          */
         public function get tileCacheSize():Number
         {
-            return m_tileCacheSize;
+            if (!isNaN(m_tileCacheSize))
+            {
+                return m_tileCacheSize;
+            }
+            var option:* = layerOption("tileCacheSize");
+            if (option is Number && !isNaN(option))
+            {
+                return Number(option);
+            }
+            var value:* = defaultValue("tileCacheSize");
+            return value is Number && !isNaN(value) ? Number(value) : 0;
         }
 
         public function set tileCacheSize(value:Number):void
@@ -307,20 +403,27 @@ package org.falpi.ags.layers
         public var updateTimings:String = "";
 
         private var m_updateMapLods:Boolean = false;
+        private var m_updateMapLodsSet:Boolean = false;
 
         /**
          * When true, while the layer is loaded and visible the Map takes its levels of detail: the zoom can reach
          * the last level of this basemap, and no further. A map whose level is past it is first brought back to
-         * it. Meant for the basemaps of a map shown one at a time.
+         * it. Meant for the basemaps of a map shown one at a time. Not set: the defaults (see TileLayerDefaults).
          */
         public function get updateMapLods():Boolean
         {
-            return m_updateMapLods;
+            if (m_updateMapLodsSet)
+            {
+                return m_updateMapLods;
+            }
+            var option:* = layerOption("updateMapLods");
+            return option is Boolean ? Boolean(option) : defaultValue("updateMapLods") == true;
         }
 
         public function set updateMapLods(value:Boolean):void
         {
             m_updateMapLods = value;
+            m_updateMapLodsSet = true;
             scheduleMapLods();
         }
 
@@ -545,6 +648,11 @@ package org.falpi.ags.layers
             }
         }
 
+        /** Called before the content is loaded: a subclass gives it the values in use of its own settings. */
+        protected function prepareContent():void
+        {
+        }
+
         private function loadContent():void
         {
             unloadContent();
@@ -552,19 +660,21 @@ package org.falpi.ags.layers
             {
                 return;
             }
-            if (m_transport == TRANSPORT_JAVASCRIPT && !JavaScriptTransport.available)
+            prepareContent();
+            var transportInUse:String = transport;
+            if (transportInUse == TRANSPORT_JAVASCRIPT && !JavaScriptTransport.available)
             {
                 contentFailed("The javascript transport is not available: the page cannot be reached through ExternalInterface");
                 return;
             }
             m_loader = new ResourceLoader();
-            m_loader.proxyURL = m_proxyURL;
-            m_loader.token = m_token;
+            m_loader.proxyURL = proxyURL;
+            m_loader.token = token;
             m_loader.tokenParameter = m_tokenParameter;
             // the token goes only to the site of the service (null for a relative url: no restriction)
             m_loader.tokenSite = UrlUtil.site(UrlUtil.host(UrlUtil.normalizeMapbox(m_url)));
             m_loader.maxConnections = maxConnections;
-            m_loader.transport = m_transport;
+            m_loader.transport = transportInUse;
             m_content.load(m_loader, m_url);
         }
 

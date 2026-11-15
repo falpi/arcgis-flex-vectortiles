@@ -184,6 +184,15 @@ package org.falpi.ags.layers.supportClasses
         }
 
         /**
+         * The defaults of the kind of basemap of this content (RasterTileLayer.defaults, VectorTileLayer.defaults):
+         * null, the defaults of every tile layer only.
+         */
+        public function get defaults():TileLayerDefaults
+        {
+            return null;
+        }
+
+        /**
          * A drawn tile left the view and is kept by the layer (tileCacheSize), to be shown again as it is: the
          * content drops what was needed only to draw it. releaseTile is called when it leaves the cache.
          */

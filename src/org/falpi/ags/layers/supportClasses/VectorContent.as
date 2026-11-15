@@ -45,6 +45,14 @@ package org.falpi.ags.layers.supportClasses
         /** Levels declared by the vector tile service (512 px tiles). */
         public static const SCHEME_SERVICE:String = "service";
 
+        /** The defaults of the vector basemaps (VectorTileLayer.defaults). */
+        public static const DEFAULTS:VectorTileLayerDefaults = new VectorTileLayerDefaults();
+
+        override public function get defaults():TileLayerDefaults
+        {
+            return DEFAULTS;
+        }
+
         private static const TILE_SIZE:Number = 512;
         private static const LABEL_MARGIN:Number = 128;
         private static const MAX_PARSED_TILES:int = 96;
@@ -143,33 +151,68 @@ package org.falpi.ags.layers.supportClasses
             reload();
         }
 
+        // settings of the vector basemaps: the value set on the layer (m_set), otherwise the one of DEFAULTS. The
+        // fields m_tilingScheme... hold the values applied
+
+        private var m_set:Object = {};
+
+        private function setting(name:String):*
+        {
+            return m_set.hasOwnProperty(name) ? m_set[name] : DEFAULTS.getValue(name);
+        }
+
+        /** Sets the value of the layer; null (NaN) goes back to the default. */
+        private function setSetting(name:String, value:*):void
+        {
+            if (value === null || value === undefined || (value is Number && isNaN(value) && name != "minimumHaloColor"))
+            {
+                delete m_set[name];
+            }
+            else
+            {
+                m_set[name] = value;
+            }
+        }
+
         private var m_tilingScheme:String = SCHEME_ARCGIS;
 
-        /** "arcgis" (levels of the classic raster basemaps) or "service" (levels of the vector service). */
+        /**
+         * "arcgis" (levels of the classic raster basemaps) or "service" (levels of the vector service). Not set:
+         * VectorTileLayer.defaults.
+         */
         public function get tilingScheme():String
         {
-            return m_tilingScheme;
+            var value:String = setting("tilingScheme") as String;
+            return value != null && value.length > 0 ? value : SCHEME_ARCGIS;
         }
 
         public function set tilingScheme(value:String):void
         {
-            if (m_tilingScheme != value)
+            setSetting("tilingScheme", value != null && value.length > 0 ? value : null);
+            if (tilingScheme != m_tilingScheme)
             {
-                m_tilingScheme = value;
+                m_tilingScheme = tilingScheme;
                 reload();
             }
         }
 
         private var m_labelsVisible:Boolean = true;
 
-        /** Shows or hides labels and icons (symbol layers). */
+        /** Shows or hides labels and icons (symbol layers). Not set: VectorTileLayer.defaults. */
         public function get labelsVisible():Boolean
         {
-            return m_labelsVisible;
+            return setting("labelsVisible") != false;
         }
 
         public function set labelsVisible(value:Boolean):void
         {
+            setSetting("labelsVisible", value);
+            applyLabelsVisible();
+        }
+
+        private function applyLabelsVisible():void
+        {
+            var value:Boolean = labelsVisible;
             if (m_labelsVisible != value)
             {
                 m_labelsVisible = value;
@@ -192,49 +235,52 @@ package org.falpi.ags.layers.supportClasses
         /** Halo width given to the labels whose style has none (see VectorTileLayer). */
         public function get minimumHaloWidth():Number
         {
-            return m_minimumHaloWidth;
+            var value:Number = Number(setting("minimumHaloWidth"));
+            return value > 0 ? value : 0;
         }
 
         public function set minimumHaloWidth(value:Number):void
         {
-            if (!(value > 0))
-            {
-                value = 0;
-            }
-            if (m_minimumHaloWidth != value)
-            {
-                m_minimumHaloWidth = value;
-                applyHalo();
-            }
+            setSetting("minimumHaloWidth", value);
+            applyHaloSettings();
         }
 
         /** Color of that halo as 0xRRGGBB; NaN picks it for each label. */
         public function get minimumHaloColor():Number
         {
-            return m_minimumHaloColor;
+            var value:* = setting("minimumHaloColor");
+            return value is Number ? Number(value) : NaN;
         }
 
         public function set minimumHaloColor(value:Number):void
         {
-            if (String(m_minimumHaloColor) != String(value))
-            {
-                m_minimumHaloColor = value;
-                applyHalo();
-            }
+            setSetting("minimumHaloColor", value);
+            applyHaloSettings();
         }
 
         /** Opacity of that halo, 0 to 1. */
         public function get minimumHaloAlpha():Number
         {
-            return m_minimumHaloAlpha;
+            var value:Number = Number(setting("minimumHaloAlpha"));
+            return value > 1 ? 1 : (value > 0 ? value : 0);
         }
 
         public function set minimumHaloAlpha(value:Number):void
         {
-            value = value > 1 ? 1 : (value > 0 ? value : 0);
-            if (m_minimumHaloAlpha != value)
+            setSetting("minimumHaloAlpha", value);
+            applyHaloSettings();
+        }
+
+        private function applyHaloSettings():void
+        {
+            var width:Number = minimumHaloWidth;
+            var color:Number = minimumHaloColor;
+            var alpha:Number = minimumHaloAlpha;
+            if (m_minimumHaloWidth != width || String(m_minimumHaloColor) != String(color) || m_minimumHaloAlpha != alpha)
             {
-                m_minimumHaloAlpha = value;
+                m_minimumHaloWidth = width;
+                m_minimumHaloColor = color;
+                m_minimumHaloAlpha = alpha;
                 applyHalo();
             }
         }
@@ -291,6 +337,10 @@ package org.falpi.ags.layers.supportClasses
 
         override public function load(loader:ResourceLoader, url:String):void
         {
+            // the settings in use, with the defaults of now
+            m_tilingScheme = tilingScheme;
+            applyLabelsVisible();
+            applyHaloSettings();
             var styleJson:Object = m_style;
             if (styleJson is String)
             {

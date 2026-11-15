@@ -89,9 +89,13 @@ At startup, once:
 private var BasemapsFile:Class;
 
 HybridTileLayer.defaultLayerMap = new XML(String(new BasemapsFile()));
-HybridTileLayer.defaultProxyURL = proxyPage;      // if a proxy is needed
-HybridTileLayer.defaultTransport = "javascript";  // if the requests should be made by the page
+AbstractTileLayer.defaults.proxyURL = proxyPage;      // if a proxy is needed
+AbstractTileLayer.defaults.transport = "javascript";  // if the requests should be made by the page
 ```
+
+`AbstractTileLayer.defaults` applies to every tile layer of the application, `HybridTileLayer`,
+`RasterTileLayer` and `VectorTileLayer` alike; `RasterTileLayer.defaults` and `VectorTileLayer.defaults` to the
+raster or vector basemaps only (see [Defaults](#defaults)).
 
 Embed the file as bytes, as above, not with `<fx:XML source="...">`: that compiles the XML as MXML, where the
 braces of the URL templates (`{level}`, `{subDomain}`…) are taken as bindings and fail to compile (escaping
@@ -150,7 +154,7 @@ The same in JSON (one basemap shown):
 - Its options are the properties of the same name: `transport` (`flash` or `javascript`), `proxyTiles` and
   `resampling` (`true` or `false`), `subDomains` and `tileServers` (comma separated in XML, arrays in JSON),
   `maxLevel`, `tileCacheSize` (megabytes), `copyright` (used when the service gives none). They are weaker than
-  the properties set on the layer and stronger than the static defaults (see [the rule](#one-rule-for-every-setting)).
+  the properties set on the layer and stronger than the defaults (see [the rule](#one-rule-for-every-setting)).
   Other attributes, as `description`, are ignored.
 - A layer shows **the first layer of its basemap that matches** `layerType` and, for raster layers,
   `layerFormat`; with neither of them, the first of the list. Several layers of the same type and format are
@@ -253,6 +257,46 @@ What the layers do with their tiles, whatever the basemap:
 | `diagnostics` | Shows a box at the top left of the map with the player version, the real frame rate, the tiles being loaded, the cache and where the time of the last update went. Meant for reporting performance problems. |
 | `updateTimings` | The timings of the last completed update as text, read-only. |
 
+#### Defaults
+
+What an application wants for all its tile layers is set once, at startup, before the layers are created, in
+three objects:
+
+| Object | Applies to | Settings |
+|---|---|---|
+| `AbstractTileLayer.defaults` | every tile layer | `proxyURL`, `token`, `transport`, `proxyTiles`, `tileCacheSize`, `updateMapLods` |
+| `RasterTileLayer.defaults` | raster basemaps | the ones above, and `resampling` |
+| `VectorTileLayer.defaults` | vector basemaps | the ones above, and `tilingScheme`, `labelsVisible`, `minimumHaloWidth`, `minimumHaloColor`, `minimumHaloAlpha` |
+
+```actionscript
+AbstractTileLayer.defaults.proxyURL = proxyPage;     // every tile layer
+RasterTileLayer.defaults.transport = "flash";        // the raster basemaps by Flash
+VectorTileLayer.defaults.transport = "javascript";   // the vector basemaps by the page
+```
+
+`AbstractTileLayer.defaults` starts with the defaults of the library (`transport` `flash`, no proxy or token,
+`proxyTiles` `true`, `tileCacheSize` 64, `updateMapLods` `false`). The objects of a kind start with the shared
+settings not set, so that they come from `AbstractTileLayer.defaults`, and with the defaults of the library for
+their own (`resampling` `true`, `tilingScheme` `arcgis`, `labelsVisible` `true`, halo 1.5 px at 0.8). Reading a
+setting of an object gives the value a layer of that kind uses; `isSet(name)` tells whether the object has its
+own; setting `null` (`NaN` for numbers) or `clear()` brings it back to how it started. An empty string for
+`proxyURL` or `token` in the object of a kind means "none" for that kind.
+
+#### One rule for every setting
+
+These settings follow one rule, from the strongest:
+
+1. the property set on the layer (an attribute of the MXML tag, or assigned by code);
+2. for `HybridTileLayer`, the option of the layer chosen from the map of basemaps (`transport`, `proxyTiles`,
+   `resampling`, `tileCacheSize`; the map also gives `subDomains`, `tileServers`, `maxLevel` and `copyright`);
+3. `RasterTileLayer.defaults` or `VectorTileLayer.defaults`, by the kind of basemap shown (for a
+   `HybridTileLayer`, the one of the basemap in use);
+4. `AbstractTileLayer.defaults`.
+
+Reading these properties gives the value in use. For `proxyURL`, `token` and `transport` of a layer, `null`
+means "not set" and an empty string for `proxyURL` and `token` means "none". A layer already loaded is not
+loaded again when a default changes.
+
 Inherited from Esri's `TiledMapServiceLayer`, with the same meaning and defaults:
 
 | Property | Description |
@@ -304,23 +348,10 @@ shows a raster one), plus:
 | `layerFormat` | `esri` or `tiled`, for raster layers. Not set: `defaultLayerFormat`; then the format of the layer chosen from the map (or `esri` with a direct `url`). |
 | `activeLayerType`, `activeLayerFormat`, `activeURL` | What is in use, read-only. |
 
-#### One rule for every setting
-
-From the strongest:
-
-1. the property set on the layer (an attribute of the MXML tag, or assigned by code);
-2. the option of the layer chosen from the map of basemaps (`transport`, `proxyTiles`, `subDomains`,
-   `tileServers`, `maxLevel`, `resampling`, `tileCacheSize`, `copyright`);
-3. the **static default**, set once by the application at startup: `defaultLayerMap`, `defaultLayerType`,
-   `defaultLayerFormat`, `defaultProxyURL`, `defaultToken`, `defaultProxyTiles`, `defaultTransport`,
-   `defaultUpdateMapLods`, `defaultResampling`, `defaultTileCacheSize`;
-4. the default of the library (`transport` `flash`, `proxyTiles` `true`, `resampling` `true`,
-   `tileCacheSize` 64…).
-
-Reading `transport`, `proxyTiles`, `resampling` or `tileCacheSize` gives the value in use. For `proxyURL` and
-`token`, `null` means "not set" and an empty string means "none". `layerType` and `layerFormat` are not options
-but the criteria that choose the layer of the basemap: set on the layer or as static defaults, otherwise the
-first layer of the basemap.
+Its own static defaults are `defaultLayerMap`, `defaultLayerType` and `defaultLayerFormat`: not settings of the
+tile layer but the criteria that choose the layer of the basemap (set on the layer or as static defaults,
+otherwise the first layer of the basemap). The other settings follow [the rule](#one-rule-for-every-setting),
+with the options of the map of basemaps as its second step and the defaults of the kind of basemap in use.
 
 ## Events
 
@@ -430,6 +461,21 @@ works, where Esri's raster layers raise a `SecurityError` on images of other dom
 are aligned by the same rule (the position rounded to the pixel; the Esri image engine truncates it, so the two
 could differ by one pixel).
 
+## Changes in 2.1.0
+
+- **Defaults for every tile layer, and per kind of basemap** ([Defaults](#defaults)):
+  `AbstractTileLayer.defaults`, `RasterTileLayer.defaults` and `VectorTileLayer.defaults` replace the static
+  defaults of `HybridTileLayer`. They apply to `RasterTileLayer` and `VectorTileLayer` too, and the raster and
+  vector basemaps can have different ones (for example the raster ones by Flash, the vector ones by the page).
+  The vector settings (`tilingScheme`, `labelsVisible`, minimum halo) have defaults too.
+- **Not compatible with 2.0.0**: `HybridTileLayer.defaultProxyURL`, `defaultToken`, `defaultTransport`,
+  `defaultProxyTiles`, `defaultUpdateMapLods`, `defaultResampling` and `defaultTileCacheSize` are removed. In
+  place of `HybridTileLayer.defaultTransport = "javascript"` write `AbstractTileLayer.defaults.transport =
+  "javascript"`, and so on (`RasterTileLayer.defaults.resampling` for `defaultResampling`). `defaultLayerMap`,
+  `defaultLayerType` and `defaultLayerFormat` stay.
+- `proxyURL`, `token` and `transport` of every tile layer: `null` means "not set" (the defaults), an empty
+  string "none".
+
 ## Upgrading from 1.x
 
 - `VectorTileLayer` keeps its properties, events and behavior: the vector tiles and labels are drawn exactly as
@@ -509,6 +555,9 @@ src/org/falpi/ags/layers/
 src/org/falpi/ags/layers/supportClasses/
   TileContent.as                 what a layer shows (base of the contents)
   TileCache.as                   the drawn tiles that left the view (tileCacheSize)
+  TileLayerDefaults.as           defaults of every tile layer (AbstractTileLayer.defaults); the raster and vector
+  RasterTileLayerDefaults.as     ones extend them (RasterTileLayer.defaults, VectorTileLayer.defaults)
+  VectorTileLayerDefaults.as
   VectorContent.as               vector basemaps: style, PBF data, drawing, labels
   RasterContent.as               raster basemaps: MapServer metadata or template, image tiles, resampling
 src/org/falpi/ags/layers/vectorTiles/   the vector engine
