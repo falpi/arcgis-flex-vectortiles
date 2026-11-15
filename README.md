@@ -58,7 +58,10 @@ application, which must already link the Flex SDK 4.6 and the ArcGIS 3.7 SWC. Th
 
 The `url` can be an Esri VectorTileServer, an ArcGIS item (`https://www.arcgis.com/sharing/rest/content/items/<id>`)
 or a Mapbox GL style (`https://tiles.openfreemap.org/styles/liberty`, `mapbox://styles/...`): the kind is
-recognized from the content of the response. From ActionScript: `new VectorTileLayer(url, proxyURL, token)`.
+recognized from the content of the response (`detectedFormat`). From ActionScript:
+`new VectorTileLayer(url, proxyURL, token)`, as the Esri layers, or
+`VectorTileLayer.fromURL(url, proxyURL = null, proxyTiles = null)`, where `null` leaves a setting to the
+[defaults](#defaults).
 A complete example: [examples/src/HybridTileDemo.mxml](examples/src/HybridTileDemo.mxml) (see [Example](#example)).
 
 ### RasterTileLayer
@@ -98,7 +101,7 @@ At startup, once:
 [Embed(source="/app/config/Basemaps.xml", mimeType="application/octet-stream")]
 private var BasemapsFile:Class;
 
-HybridTileLayer.defaultLayerMap = new XML(String(new BasemapsFile()));
+HybridTileLayer.defaults.layerMap = new XML(String(new BasemapsFile()));
 AbstractTileLayer.defaults.proxyURL = proxyPage;      // if a proxy is needed
 AbstractTileLayer.defaults.transport = "javascript";  // if the requests should be made by the page
 ```
@@ -131,8 +134,8 @@ HybridTileLayer.fromSelector(selector, layerType = null, layerFormat = null, pro
 HybridTileLayer.fromParams(url, layerType = null, layerFormat = null, proxyURL = null, proxyTiles = null)
 ```
 
-`null` leaves a setting to the defaults: for `layerType` and `layerFormat` `defaultLayerType` and
-`defaultLayerFormat`, then the first layer of the basemap (`fromSelector`) or `vector` and `esri` (`fromParams`).
+`null` leaves a setting to the defaults: for `layerType` and `layerFormat` those of `HybridTileLayer.defaults`,
+then the first layer of the basemap (`fromSelector`) or `vector` and `esri` (`fromParams`).
 
 ## The map of basemaps
 
@@ -287,6 +290,7 @@ three objects:
 | `AbstractTileLayer.defaults` | every tile layer | `proxyURL`, `token`, `transport`, `proxyTiles`, `tileCacheSize`, `updateMapLods` |
 | `RasterTileLayer.defaults` | raster basemaps | the ones above, and `resampling` |
 | `VectorTileLayer.defaults` | vector basemaps | the ones above, and `tilingScheme`, `labelsVisible`, `minimumHaloWidth`, `minimumHaloColor`, `minimumHaloAlpha` |
+| `HybridTileLayer.defaults` | `HybridTileLayer` | `layerMap`, `layerType`, `layerFormat`: not settings of the tile layer but the criteria that choose the basemap |
 
 ```actionscript
 AbstractTileLayer.defaults.proxyURL = proxyPage;     // every tile layer
@@ -365,15 +369,15 @@ shows a raster one), plus:
 | Property | Description |
 |---|---|
 | `layerSelector` | The basemap of `layerMap` to show (ignored when `url` is set). |
-| `layerMap` | The map of basemaps: XML (or its text) or JSON (parsed or its text). Not set: `defaultLayerMap`. |
-| `layerType` | `vector` or `raster`. Not set: `defaultLayerType`; if that is not set either, the type of the layer chosen from the map (or `vector` with a direct `url`). |
-| `layerFormat` | `esri` or `tiled`, for raster layers. Not set: `defaultLayerFormat`; then the format of the layer chosen from the map (or `esri` with a direct `url`). |
+| `layerMap` | The map of basemaps: XML (or its text) or JSON (parsed or its text). Not set: `HybridTileLayer.defaults.layerMap`. |
+| `layerType` | `vector` or `raster`. Not set: `HybridTileLayer.defaults.layerType`; if that is not set either, the type of the layer chosen from the map (or `vector` with a direct `url`). |
+| `layerFormat` | `esri` or `tiled`, for raster layers. Not set: `HybridTileLayer.defaults.layerFormat`; then the format of the layer chosen from the map (or `esri` with a direct `url`). |
 | `activeLayerType`, `activeLayerFormat`, `activeURL` | What is in use, read-only. |
 
-Its own static defaults are `defaultLayerMap`, `defaultLayerType` and `defaultLayerFormat`: not settings of the
-tile layer but the criteria that choose the layer of the basemap (set on the layer or as static defaults,
-otherwise the first layer of the basemap). The other settings follow [the rule](#one-rule-for-every-setting),
-with the options of the map of basemaps as its second step and the defaults of the kind of basemap in use.
+Its own defaults, `HybridTileLayer.defaults`, are `layerMap`, `layerType` and `layerFormat`: not settings of the
+tile layer but the criteria that choose the layer of the basemap (set on the layer or as defaults, otherwise
+the first layer of the basemap). The other settings follow [the rule](#one-rule-for-every-setting), with the
+options of the map of basemaps as its second step and the defaults of the kind of basemap in use.
 
 ## Events
 
@@ -485,22 +489,25 @@ could differ by one pixel).
 
 ## Changes in 2.1.0
 
-- **Factories**: `RasterTileLayer.fromMapServer` and `fromTemplate`, `HybridTileLayer.fromSelector` and
-  `fromParams`, to create a layer by code with the settings that the constructor of the Esri layers does not
-  have (format, sub-domains, selector, type), and `proxyURL` and `proxyTiles` at the end.
+- **Factories**: `VectorTileLayer.fromURL`, `RasterTileLayer.fromMapServer` and `fromTemplate`,
+  `HybridTileLayer.fromSelector` and `fromParams`, to create a layer by code with the settings that the
+  constructor of the Esri layers does not have (format, sub-domains, selector, type), and `proxyURL` and
+  `proxyTiles` at the end.
 - **`detectedFormat` and `styleOrigin`** on the vector layers tell what their `url` was recognized as (`arcgis`
   or `maplibre`) and where the style in use comes from (`item`, `service`, `document` or `inline`); both `null`
   until loaded, and for a `HybridTileLayer` that shows a raster basemap.
 - **Defaults for every tile layer, and per kind of basemap** ([Defaults](#defaults)):
-  `AbstractTileLayer.defaults`, `RasterTileLayer.defaults` and `VectorTileLayer.defaults` replace the static
-  defaults of `HybridTileLayer`. They apply to `RasterTileLayer` and `VectorTileLayer` too, and the raster and
-  vector basemaps can have different ones (for example the raster ones by Flash, the vector ones by the page).
-  The vector settings (`tilingScheme`, `labelsVisible`, minimum halo) have defaults too.
-- **Not compatible with 2.0.0**: `HybridTileLayer.defaultProxyURL`, `defaultToken`, `defaultTransport`,
-  `defaultProxyTiles`, `defaultUpdateMapLods`, `defaultResampling` and `defaultTileCacheSize` are removed. In
-  place of `HybridTileLayer.defaultTransport = "javascript"` write `AbstractTileLayer.defaults.transport =
-  "javascript"`, and so on (`RasterTileLayer.defaults.resampling` for `defaultResampling`). `defaultLayerMap`,
-  `defaultLayerType` and `defaultLayerFormat` stay.
+  `AbstractTileLayer.defaults`, `RasterTileLayer.defaults`, `VectorTileLayer.defaults` and
+  `HybridTileLayer.defaults` replace the static defaults of `HybridTileLayer`. They apply to `RasterTileLayer`
+  and `VectorTileLayer` too, and the raster and vector basemaps can have different ones (for example the raster
+  ones by Flash, the vector ones by the page). The vector settings (`tilingScheme`, `labelsVisible`, minimum
+  halo) have defaults too.
+- **Not compatible with 2.0.0**: the static defaults of `HybridTileLayer` are removed. In place of
+  `HybridTileLayer.defaultTransport = "javascript"` write `AbstractTileLayer.defaults.transport = "javascript"`,
+  and likewise for `defaultProxyURL`, `defaultToken`, `defaultProxyTiles`, `defaultUpdateMapLods` and
+  `defaultTileCacheSize`; `RasterTileLayer.defaults.resampling` for `defaultResampling`;
+  `HybridTileLayer.defaults.layerMap`, `layerType` and `layerFormat` for `defaultLayerMap`, `defaultLayerType`
+  and `defaultLayerFormat`.
 - `proxyURL`, `token` and `transport` of every tile layer: `null` means "not set" (the defaults), an empty
   string "none".
 
@@ -583,9 +590,11 @@ src/org/falpi/ags/layers/
 src/org/falpi/ags/layers/supportClasses/
   TileContent.as                 what a layer shows (base of the contents)
   TileCache.as                   the drawn tiles that left the view (tileCacheSize)
+  LayerDefaults.as               the mechanism of the objects of defaults (initial values, isSet, clear)
   TileLayerDefaults.as           defaults of every tile layer (AbstractTileLayer.defaults); the raster and vector
   RasterTileLayerDefaults.as     ones extend them (RasterTileLayer.defaults, VectorTileLayer.defaults)
   VectorTileLayerDefaults.as
+  HybridTileLayerDefaults.as     defaults of HybridTileLayer: layerMap, layerType, layerFormat
   VectorContent.as               vector basemaps: style, PBF data, drawing, labels
   RasterContent.as               raster basemaps: MapServer metadata or template, image tiles, resampling
 src/org/falpi/ags/layers/vectorTiles/   the vector engine

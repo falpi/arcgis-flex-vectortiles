@@ -2,6 +2,7 @@ package org.falpi.ags.layers
 {
     import flash.events.Event;
 
+    import org.falpi.ags.layers.supportClasses.HybridTileLayerDefaults;
     import org.falpi.ags.layers.supportClasses.RasterContent;
     import org.falpi.ags.layers.supportClasses.VectorContent;
     import org.falpi.ags.layers.supportClasses.tile_internal;
@@ -56,8 +57,8 @@ package org.falpi.ags.layers
      * the option of the layer chosen from layerMap, the defaults of the kind of basemap shown
      * (<code>RasterTileLayer.defaults</code> or <code>VectorTileLayer.defaults</code>), the defaults of every tile
      * layer (<code>AbstractTileLayer.defaults</code>, which start with those of the library). The defaults of this
-     * class are only the criteria that choose the basemap: <code>defaultLayerMap</code>,
-     * <code>defaultLayerType</code>, <code>defaultLayerFormat</code>.</p>
+     * class (<code>HybridTileLayer.defaults</code>) are only the criteria that choose the basemap:
+     * <code>layerMap</code>, <code>layerType</code>, <code>layerFormat</code>.</p>
      */
     public class HybridTileLayer extends AbstractTileLayer
     {
@@ -69,15 +70,24 @@ package org.falpi.ags.layers
         public static const FORMAT_TILED:String = RasterContent.FORMAT_TILED;
 
         // ------------------------------------------------------------------
-        // static defaults
+        // defaults
         // ------------------------------------------------------------------
 
-        /** Default of layerType. */
-        public static var defaultLayerType:String;
-        /** Default of layerFormat. */
-        public static var defaultLayerFormat:String;
-        /** Default of layerMap. */
-        public static var defaultLayerMap:Object;
+        private static var s_defaults:HybridTileLayerDefaults;
+
+        /**
+         * The defaults of HybridTileLayer: layerMap, layerType and layerFormat of the layers that set none (see
+         * HybridTileLayerDefaults). The settings of the tile layer come from AbstractTileLayer.defaults and from
+         * the defaults of the kind of basemap shown.
+         */
+        public static function get defaults():HybridTileLayerDefaults
+        {
+            if (s_defaults == null)
+            {
+                s_defaults = new HybridTileLayerDefaults();
+            }
+            return s_defaults;
+        }
 
         private var m_vector:VectorContent;
         private var m_raster:RasterContent;
@@ -95,9 +105,9 @@ package org.falpi.ags.layers
         // ------------------------------------------------------------------
 
         /**
-         * A layer of a basemap of the map of basemaps (layerMap, otherwise defaultLayerMap).
-         * @param layerType "vector" or "raster"; null: defaultLayerType, otherwise the first layer of the basemap
-         * @param layerFormat "esri" or "tiled" for a raster layer; null: defaultLayerFormat, otherwise the first one
+         * A layer of a basemap of the map of basemaps (layerMap, otherwise HybridTileLayer.defaults.layerMap).
+         * @param layerType "vector" or "raster"; null: HybridTileLayer.defaults.layerType, otherwise the first layer of the basemap
+         * @param layerFormat "esri" or "tiled" for a raster layer; null: HybridTileLayer.defaults.layerFormat, otherwise the first one
          * @param proxyURL proxy page; null: the defaults
          * @param proxyTiles true or false; null: the defaults
          */
@@ -108,14 +118,14 @@ package org.falpi.ags.layers
             layer.layerSelector = selector;
             layer.layerType = layerType;
             layer.layerFormat = layerFormat;
-            RasterTileLayer.applyProxyTiles(layer, proxyTiles);
+            AbstractTileLayer.applyProxyTiles(layer, proxyTiles);
             return layer;
         }
 
         /**
          * A layer of a URL given directly, of the type and format given.
-         * @param layerType "vector" or "raster"; null: defaultLayerType, otherwise "vector"
-         * @param layerFormat "esri" or "tiled" for a raster layer; null: defaultLayerFormat, otherwise "esri"
+         * @param layerType "vector" or "raster"; null: HybridTileLayer.defaults.layerType, otherwise "vector"
+         * @param layerFormat "esri" or "tiled" for a raster layer; null: HybridTileLayer.defaults.layerFormat, otherwise "esri"
          * @param proxyURL proxy page; null: the defaults
          * @param proxyTiles true or false; null: the defaults
          */
@@ -125,7 +135,7 @@ package org.falpi.ags.layers
             var layer:HybridTileLayer = new HybridTileLayer(url, proxyURL);
             layer.layerType = layerType;
             layer.layerFormat = layerFormat;
-            RasterTileLayer.applyProxyTiles(layer, proxyTiles);
+            AbstractTileLayer.applyProxyTiles(layer, proxyTiles);
             return layer;
         }
 
@@ -138,7 +148,7 @@ package org.falpi.ags.layers
         [Bindable("layerTypeChanged")]
         [Inspectable(enumeration="vector,raster")]
         /**
-         * "vector" or "raster". Not set: defaultLayerType; if that is not set either, with layerSelector the
+         * "vector" or "raster". Not set: HybridTileLayer.defaults.layerType; if that is not set either, with layerSelector the
          * type of the layer taken from layerMap, with url "vector".
          */
         public function get layerType():String
@@ -162,7 +172,7 @@ package org.falpi.ags.layers
         [Inspectable(enumeration="esri,tiled")]
         /**
          * Format of a raster layer: "esri" (ArcGIS MapServer) or "tiled" (URL template). Not set:
-         * defaultLayerFormat; if that is not set either, with layerSelector the format of the layer taken from
+         * HybridTileLayer.defaults.layerFormat; if that is not set either, with layerSelector the format of the layer taken from
          * layerMap, with url "esri". Not used by vector layers, whose format is recognized from the content.
          */
         public function get layerFormat():String
@@ -203,7 +213,7 @@ package org.falpi.ags.layers
 
         /**
          * The basemaps, each with its layers in order of preference (see the class description): XML (or its
-         * text) or JSON (parsed or its text). Not set: defaultLayerMap.
+         * text) or JSON (parsed or its text). Not set: HybridTileLayer.defaults.layerMap.
          */
         public function get layerMap():Object
         {
@@ -468,8 +478,8 @@ package org.falpi.ags.layers
         private function configure():void
         {
             // what is asked: null when it is not
-            var type:String = nonEmpty(m_layerType, defaultLayerType, null);
-            var format:String = nonEmpty(m_layerFormat, defaultLayerFormat, null);
+            var type:String = nonEmpty(m_layerType, defaults.layerType, null);
+            var format:String = nonEmpty(m_layerFormat, defaults.layerFormat, null);
             if (type != null && type != TYPE_VECTOR && type != TYPE_RASTER)
             {
                 fail("Unknown layerType '" + type + "' (vector, raster)");
@@ -486,7 +496,7 @@ package org.falpi.ags.layers
             var options:Object = {};
             if ((target == null || target.length == 0) && m_layerSelector != null && m_layerSelector.length > 0)
             {
-                var source:Object = m_layerMap != null ? m_layerMap : defaultLayerMap;
+                var source:Object = m_layerMap != null ? m_layerMap : defaults.layerMap;
                 if (source == null)
                 {
                     fail("layerMap is not set (layerSelector '" + m_layerSelector + "')");

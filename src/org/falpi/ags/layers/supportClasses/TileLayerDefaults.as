@@ -19,7 +19,7 @@ package org.falpi.ags.layers.supportClasses
      * VectorTileLayer.defaults.transport = "javascript";   // vector basemaps
      * </listing>
      */
-    public class TileLayerDefaults
+    public class TileLayerDefaults extends LayerDefaults
     {
         /** The object of every tile layer (AbstractTileLayer.defaults). */
         private static var s_shared:TileLayerDefaults;
@@ -35,14 +35,10 @@ package org.falpi.ags.layers.supportClasses
             return s_shared;
         }
 
-        private var m_initial:Object;
-        private var m_values:Object;
-
         /** @param initial the values it starts with (and goes back to with clear) */
         public function TileLayerDefaults(initial:Object = null)
         {
-            m_initial = initial != null ? initial : {};
-            clear();
+            super(initial);
         }
 
         // ------------------------------------------------------------------
@@ -121,57 +117,17 @@ package org.falpi.ags.layers.supportClasses
         // values
         // ------------------------------------------------------------------
 
-        /** Whether this object has a value for the setting (otherwise it comes from AbstractTileLayer.defaults). */
-        public function isSet(name:String):Boolean
-        {
-            return m_values.hasOwnProperty(name);
-        }
-
-        /** Brings one setting (or all of them) back to how the object started. */
-        public function clear(name:String = null):void
-        {
-            if (name == null)
-            {
-                m_values = {};
-                for (var key:String in m_initial)
-                {
-                    m_values[key] = m_initial[key];
-                }
-            }
-            else if (m_initial.hasOwnProperty(name))
-            {
-                m_values[name] = m_initial[name];
-            }
-            else
-            {
-                delete m_values[name];
-            }
-        }
-
         /**
          * The value of a setting: the one of this object, otherwise the one of AbstractTileLayer.defaults;
          * undefined when neither has one.
          */
-        public function getValue(name:String):*
+        override public function getValue(name:String):*
         {
-            if (m_values.hasOwnProperty(name))
+            if (isSet(name))
             {
-                return m_values[name];
+                return super.getValue(name);
             }
             return this !== shared ? shared.getValue(name) : undefined;
-        }
-
-        /** Sets a value; null (NaN for numbers) brings the setting back to how the object started. */
-        protected function store(name:String, value:*):void
-        {
-            if (value === null || value === undefined || (value is Number && isNaN(value)))
-            {
-                clear(name);
-            }
-            else
-            {
-                m_values[name] = value;
-            }
         }
     }
 }

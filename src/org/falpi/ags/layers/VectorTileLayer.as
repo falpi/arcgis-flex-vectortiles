@@ -2,8 +2,11 @@ package org.falpi.ags.layers
 {
     import org.falpi.ags.layers.supportClasses.VectorContent;
     import org.falpi.ags.layers.supportClasses.VectorTileLayerDefaults;
+    import org.falpi.ags.layers.supportClasses.tile_internal;
     import org.falpi.ags.layers.vectorTiles.source.BasemapDefinition;
     import org.falpi.ags.layers.vectorTiles.style.Style;
+
+    use namespace tile_internal;
 
     /**
      * A basemap layer for the ArcGIS API for Flex that renders vector tiles
@@ -37,6 +40,23 @@ package org.falpi.ags.layers
             super(url, proxyURL, token);
             m_vector = new VectorContent();
             setContent(m_vector);
+        }
+
+        // ------------------------------------------------------------------
+        // creation by code
+        // ------------------------------------------------------------------
+
+        /**
+         * A layer of a vector basemap: an Esri VectorTileServer, an ArcGIS item or a MapLibre / Mapbox GL style
+         * (recognized from the content, see detectedFormat).
+         * @param proxyURL proxy page; null: the defaults
+         * @param proxyTiles true or false; null: the defaults
+         */
+        public static function fromURL(url:String, proxyURL:String = null, proxyTiles:Object = null):VectorTileLayer
+        {
+            var layer:VectorTileLayer = new VectorTileLayer(url, proxyURL);
+            AbstractTileLayer.applyProxyTiles(layer, proxyTiles);
+            return layer;
         }
 
         /**

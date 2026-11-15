@@ -648,6 +648,19 @@ package org.falpi.ags.layers
             }
         }
 
+        /** proxyTiles of a factory: a Boolean is set on the layer, null leaves it to the defaults. */
+        tile_internal static function applyProxyTiles(layer:AbstractTileLayer, proxyTiles:Object):void
+        {
+            if (proxyTiles is Boolean)
+            {
+                layer.proxyTiles = Boolean(proxyTiles);
+            }
+            else if (proxyTiles != null)
+            {
+                throw new ArgumentError("proxyTiles must be true, false or null: " + proxyTiles);
+            }
+        }
+
         /** Called before the content is loaded: a subclass gives it the values in use of its own settings. */
         protected function prepareContent():void
         {

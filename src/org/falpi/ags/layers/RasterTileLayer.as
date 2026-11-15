@@ -46,7 +46,7 @@ package org.falpi.ags.layers
         {
             var layer:RasterTileLayer = new RasterTileLayer(url, proxyURL);
             layer.format = FORMAT_ESRI;
-            applyProxyTiles(layer, proxyTiles);
+            AbstractTileLayer.applyProxyTiles(layer, proxyTiles);
             return layer;
         }
 
@@ -62,21 +62,8 @@ package org.falpi.ags.layers
             var layer:RasterTileLayer = new RasterTileLayer(template, proxyURL);
             layer.format = FORMAT_TILED;
             layer.subDomains = subDomains;
-            applyProxyTiles(layer, proxyTiles);
+            AbstractTileLayer.applyProxyTiles(layer, proxyTiles);
             return layer;
-        }
-
-        /** proxyTiles of a factory: a Boolean is set on the layer, null leaves it to the defaults. */
-        tile_internal static function applyProxyTiles(layer:AbstractTileLayer, proxyTiles:Object):void
-        {
-            if (proxyTiles is Boolean)
-            {
-                layer.proxyTiles = Boolean(proxyTiles);
-            }
-            else if (proxyTiles != null)
-            {
-                throw new ArgumentError("proxyTiles must be true, false or null: " + proxyTiles);
-            }
         }
 
         [Inspectable(enumeration="esri,tiled", defaultValue="esri")]
