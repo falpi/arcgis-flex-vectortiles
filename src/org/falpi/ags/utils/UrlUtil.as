@@ -1,4 +1,4 @@
-package org.falpi.ags.layers.vectorTiles.util
+package org.falpi.ags.utils
 {
     /** URL helpers (relative resolution, query handling, mapbox:// scheme). */
     public final class UrlUtil
@@ -8,6 +8,40 @@ package org.falpi.ags.layers.vectorTiles.util
         public static function isAbsolute(url:String):Boolean
         {
             return SCHEME.test(url) || url.indexOf("//") == 0;
+        }
+
+        /** Host name of an absolute http(s) URL, in lower case (null for any other URL). */
+        public static function host(url:String):String
+        {
+            var match:Array = url != null ? /^https?:\/\/(?:[^\/?#@]*@)?(\[[^\]]*\]|[^\/?#:]+)/i.exec(url) : null;
+            return match != null ? String(match[1]).toLowerCase() : null;
+        }
+
+        /**
+         * The site of a host: its registered domain (maps.arcgis.com and basemaps.arcgis.com are both arcgis.com;
+         * "co.uk"-like suffixes keep one more label). IP addresses and single names are their own site.
+         */
+        public static function site(host:String):String
+        {
+            if (host == null || host.indexOf(".") < 0 || host.charAt(0) == "[" || /^[\d.]+$/.test(host))
+            {
+                return host;
+            }
+            var labels:Array = host.split(".");
+            var count:int = 2;
+            if (labels.length > 2 && String(labels[labels.length - 1]).length == 2 &&
+                /^(com|co|net|org|gov|edu|ac|or|ne|go)$/.test(labels[labels.length - 2]))
+            {
+                count = 3;
+            }
+            return labels.slice(Math.max(0, labels.length - count)).join(".");
+        }
+
+        /** Whether host belongs to site (it is the site itself or one of its sub-domains). */
+        public static function inSite(host:String, site:String):Boolean
+        {
+            return host != null && site != null && (host == site ||
+                (host.length > site.length && host.substr(host.length - site.length - 1) == "." + site));
         }
 
         public static function stripQuery(url:String):String

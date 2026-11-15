@@ -1,6 +1,6 @@
-package org.falpi.ags.layers.vectorTiles.net
+package org.falpi.ags.net
 {
-    import org.falpi.ags.layers.vectorTiles.util.UrlUtil;
+    import org.falpi.ags.utils.UrlUtil;
 
     import flash.events.Event;
     import flash.events.HTTPStatusEvent;
@@ -12,9 +12,10 @@ package org.falpi.ags.layers.vectorTiles.net
     import flash.utils.ByteArray;
 
     /**
-     * Queued loader for the text and binary resources of a vector basemap
-     * (style, service metadata, tiles, sprites, glyphs). Applies the proxy
-     * and the token, limits the number of parallel connections and
+     * Queued loader for the text and binary resources of the tile layers
+     * (service metadata, styles, tiles, sprites, glyphs). Applies the proxy
+     * and the token, limits the number of parallel connections, makes the
+     * requests through Flash or through the page (transport) and
      * transparently inflates gzip payloads.
      */
     public final class ResourceLoader
@@ -25,7 +26,30 @@ package org.falpi.ags.layers.vectorTiles.net
         public var token:String;
         /** Name of the query parameter carrying the token. */
         public var tokenParameter:String = "token";
-        public var maxConnections:int = 6;
+        /**
+         * Site (registered domain, see UrlUtil.site) the token is sent to: requests to other hosts, such as fonts or
+         * sprites of a style kept elsewhere, go without it. Null: every http(s) request carries it.
+         */
+        public var tokenSite:String;
+        private var m_maxConnections:int = 6;
+
+        /** Maximum number of parallel requests; raised, the queued ones start at once. */
+        public function get maxConnections():int
+        {
+            return m_maxConnections;
+        }
+
+        public function set maxConnections(value:int):void
+        {
+            m_maxConnections = Math.max(1, value);
+            pump();
+        }
+        /**
+         * Who makes the requests: "flash" (default) or "javascript", the page that hosts the SWF (see
+         * JavaScriptTransport). The proxy and the token apply the same way. With "javascript" a request fails
+         * when the page cannot make it: Flash never makes it instead.
+         */
+        public var transport:String = "flash";
 
         private var m_queue:Vector.<ResourceRequest> = new Vector.<ResourceRequest>();
         private var m_active:int = 0;
@@ -35,12 +59,15 @@ package org.falpi.ags.layers.vectorTiles.net
          * Queues a request.
          * onComplete receives (data:*, request:ResourceRequest) where data is a String or a ByteArray.
          * onError receives (message:String, request:ResourceRequest).
+         * A direct request does not go through the proxy.
          */
-        public function load(url:String, binary:Boolean, onComplete:Function, onError:Function, urgent:Boolean = false):ResourceRequest
+        public function load(url:String, binary:Boolean, onComplete:Function, onError:Function, urgent:Boolean = false,
+            direct:Boolean = false):ResourceRequest
         {
             var request:ResourceRequest = new ResourceRequest();
             request.url = url;
             request.binary = binary;
+            request.direct = direct;
             request.onComplete = onComplete;
             request.onError = onError;
             if (urgent)
@@ -69,6 +96,15 @@ package org.falpi.ags.layers.vectorTiles.net
                 m_queue.splice(index, 1);
                 return;
             }
+            if (request.scriptId > 0)
+            {
+                JavaScriptTransport.cancel(request.scriptId);
+                request.scriptId = 0;
+                untrack(request);
+                m_active--;
+                pump();
+                return;
+            }
             if (request.loader != null)
             {
                 untrack(request);
@@ -95,15 +131,16 @@ package org.falpi.ags.layers.vectorTiles.net
             }
         }
 
-        /** Builds the URL actually requested (token and proxy applied). */
-        public function buildURL(url:String):String
+        /** Builds the URL actually requested (token and, unless direct, proxy applied). */
+        public function buildURL(url:String, direct:Boolean = false):String
         {
             var isHttp:Boolean = /^https?:/i.test(url);
-            if (isHttp && token != null && token.length > 0 && url.indexOf(tokenParameter + "=") < 0)
+            if (isHttp && token != null && token.length > 0 && url.indexOf(tokenParameter + "=") < 0 &&
+                (tokenSite == null || UrlUtil.inSite(UrlUtil.host(url), tokenSite)))
             {
                 url = UrlUtil.appendQuery(url, tokenParameter + "=" + encodeURIComponent(token));
             }
-            if (isHttp && proxyURL != null && proxyURL.length > 0)
+            if (isHttp && !direct && proxyURL != null && proxyURL.length > 0)
             {
                 url = proxyURL + "?" + url;
             }
@@ -112,7 +149,7 @@ package org.falpi.ags.layers.vectorTiles.net
 
         private function pump():void
         {
-            while (m_active < maxConnections && m_queue.length > 0)
+            while (m_active < m_maxConnections && m_queue.length > 0)
             {
                 start(m_queue.shift());
             }
@@ -120,6 +157,49 @@ package org.falpi.ags.layers.vectorTiles.net
 
         private function start(request:ResourceRequest):void
         {
+            if (transport == "javascript")
+            {
+                m_active++;
+                m_running.push(request);
+                if (!JavaScriptTransport.available)
+                {
+                    finish(request, null, "The page cannot make the request (no ExternalInterface)");
+                    return;
+                }
+                request.scriptId = JavaScriptTransport.load(buildURL(request.url, request.direct), function(bytes:ByteArray, status:int, error:String):void
+                {
+                    request.scriptId = 0;
+                    request.status = status;
+                    if (bytes == null || status >= 400)
+                    {
+                        finish(request, null, error != null ? error : "HTTP " + status);
+                        return;
+                    }
+                    var data:*;
+                    try
+                    {
+                        if (request.binary)
+                        {
+                            data = gunzipIfNeeded(bytes);
+                        }
+                        else
+                        {
+                            data = bytes.readUTFBytes(bytes.length);
+                            if (String(data).charCodeAt(0) == 0xFEFF)
+                            {
+                                data = String(data).substr(1);
+                            }
+                        }
+                    }
+                    catch (failure:Error)
+                    {
+                        finish(request, null, "Invalid compressed data: " + failure.message);
+                        return;
+                    }
+                    finish(request, data, null);
+                });
+                return;
+            }
             var loader:URLLoader = new URLLoader();
             loader.dataFormat = request.binary ? URLLoaderDataFormat.BINARY : URLLoaderDataFormat.TEXT;
             request.loader = loader;
@@ -135,7 +215,7 @@ package org.falpi.ags.layers.vectorTiles.net
             m_running.push(request);
             try
             {
-                loader.load(new URLRequest(buildURL(request.url)));
+                loader.load(new URLRequest(buildURL(request.url, request.direct)));
             }
             catch (error:Error)
             {

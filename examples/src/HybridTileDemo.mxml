@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    HybridTileLayer demo.
+
+    One map with three HybridTileLayers that show the same basemap of a map of basemaps in its three forms:
+    vector, raster from an ArcGIS MapServer (format "esri") and raster from a URL template (format "tiled").
+    One of them is visible at a time, as in an application with a basemap selector: the others stay loaded,
+    so that switching back to one shows it at once. The panel on the left drives the properties of the layers.
+
+    The proxy page can be changed in the panel. By default it is the one of the development server of the
+    repository (tests/server.cmd), which also hosts this SWF on http://localhost:8790.
+
+    FlashVars (see README, "Transport and proxy"):
+      proxyURL   proxy page shown at start (an empty value: no proxy);
+      transport  "flash" or "javascript". Default: "javascript" when the page can be scripted, "flash" otherwise.
+-->
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
+               xmlns:s="library://ns.adobe.com/flex/spark"
+               xmlns:mx="library://ns.adobe.com/flex/mx"
+               xmlns:esri="http://www.esri.com/2008/ags"
+               xmlns:falpi="http://falpi.org/ags"
+               preinitialize="init()">
+    <fx:Script>
+        <![CDATA[
+            import com.esri.ags.SpatialReference;
+            import com.esri.ags.events.ExtentEvent;
+            import com.esri.ags.events.LayerEvent;
+            import com.esri.ags.geometry.Extent;
+            import com.esri.ags.layers.supportClasses.LOD;
+
+            import flash.external.ExternalInterface;
+
+            import mx.collections.ArrayList;
+            import mx.rpc.events.FaultEvent;
+
+            import org.falpi.ags.layers.HybridTileLayer;
+
+            private static const ITEMS:String = "https://www.arcgis.com/sharing/rest/content/items/";
+            private static const SERVICES:String = "https://services.arcgisonline.com/ArcGIS/rest/services/";
+            private static const TEMPLATES:String = "https://{subDomain}.arcgisonline.com/ArcGIS/rest/services/";
+
+            /**
+             * The map of basemaps, as an application would keep it in a file (Basemaps.xml). Written as text: in an
+             * XML literal the braces of the URL templates would be read as ActionScript expressions.
+             */
+            private static const LAYER_MAP:String =
+                '<Basemaps>' +
+                '<Basemap id="topo" description="Topographic">' +
+                '  <Layer type="vector" url="' + ITEMS + '7dc6cea0b1764a1f9af2e679f642f0f5"/>' +
+                '  <Layer type="raster" format="esri" url="' + SERVICES + 'World_Topo_Map/MapServer"/>' +
+                '  <Layer type="raster" format="tiled" url="' + TEMPLATES + 'World_Topo_Map/MapServer/tile/{level}/{row}/{col}" subDomains="services,server"/>' +
+                '</Basemap>' +
+                '<Basemap id="streets" description="Streets">' +
+                '  <Layer type="vector" url="' + ITEMS + 'de26a3cf4cc9451298ea173c4b324736"/>' +
+                '  <Layer type="raster" format="esri" url="' + SERVICES + 'World_Street_Map/MapServer"/>' +
+                '  <Layer type="raster" format="tiled" url="' + TEMPLATES + 'World_Street_Map/MapServer/tile/{level}/{row}/{col}" subDomains="services,server"/>' +
+                '</Basemap>' +
+                '<Basemap id="imagery" description="Imagery">' +
+                '  <Layer type="raster" format="esri" url="' + SERVICES + 'World_Imagery/MapServer"/>' +
+                '  <Layer type="raster" format="tiled" url="' + TEMPLATES + 'World_Imagery/MapServer/tile/{level}/{row}/{col}" subDomains="services,server"/>' +
+                '</Basemap>' +
+                '<Basemap id="gray" description="Light gray">' +
+                '  <Layer type="vector" url="' + ITEMS + '291da5eab3a0412593b66d384379f89f"/>' +
+                '  <Layer type="raster" format="esri" url="' + SERVICES + 'Canvas/World_Light_Gray_Base/MapServer"/>' +
+                '  <Layer type="raster" format="tiled" url="' + TEMPLATES + 'Canvas/World_Light_Gray_Base/MapServer/tile/{level}/{row}/{col}" subDomains="services,server" maxLevel="16"/>' +
+                '</Basemap>' +
+                '<Basemap id="osm" description="OpenStreetMap">' +
+                '  <Layer type="vector" url="' + ITEMS + '3e1a00aeae81496587988075fe529f71"/>' +
+                '  <Layer type="raster" format="tiled" url="https://{subDomain}.tile.openstreetmap.org/{level}/{col}/{row}.png" subDomains="a,b,c"/>' +
+                '</Basemap>' +
+                '</Basemaps>';
+
+            [Bindable] private var layerMap:XML;
+            /** The proxy page of the development server of the repository (tests/server.cmd). */
+            private static const DEV_PROXY:String = "http://localhost:8790/proxy";
+
+            /** The proxy page in use: null or empty for none. */
+            [Bindable] private var proxy:String;
+            [Bindable] private var transport:String;
+            [Bindable] private var transports:ArrayList = new ArrayList(["flash", "javascript"]);
+
+            /** The basemaps of the selector: one form of each can be missing (no vector imagery, no OSM MapServer). */
+            [Bindable] private var basemaps:ArrayList = new ArrayList([
+                {id: "topo", label: "Topographic"},
+                {id: "streets", label: "Streets"},
+                {id: "imagery", label: "Imagery (no vector form)"},
+                {id: "gray", label: "Light gray"},
+                {id: "osm", label: "OpenStreetMap (no MapServer)"}
+            ]);
+
+            /** Places to go: each shows something of the layers. */
+            [Bindable] private var places:ArrayList = new ArrayList([
+                {label: "Rome", x: 1390000, y: 5144000, level: 12},
+                {label: "Lake Bolsena (dark imagery: seams in zoom)", x: 1327000, y: 5253000, level: 12},
+                {label: "New York (imagery down to level 20)", x: -8238000, y: 4970000, level: 18},
+                {label: "Pacific (antimeridian, wrapAround180)", x: 20037508, y: 0, level: 3},
+                {label: "The world", x: 1390000, y: 3000000, level: 2}
+            ]);
+
+            [Bindable] private var basemapId:String = "topo";
+            /** 0 vector, 1 raster esri, 2 raster tiled. */
+            [Bindable] private var scheme:int = 0;
+
+            [Bindable] private var vectorStatus:String = "";
+            [Bindable] private var esriStatus:String = "";
+            [Bindable] private var tiledStatus:String = "";
+            [Bindable] private var mapStatus:String = "";
+
+            private function init():void
+            {
+                layerMap = new XML(LAYER_MAP);
+                proxy = parameters.proxyURL !== undefined ? parameters.proxyURL : DEV_PROXY;
+                transport = parameters.transport;
+                if (transport != "flash" && transport != "javascript")
+                {
+                    transport = ExternalInterface.available ? "javascript" : "flash";
+                }
+            }
+
+            // ------------------------------------------------------------------
+            // status of the layers
+            // ------------------------------------------------------------------
+
+            private function setStatus(layer:HybridTileLayer, text:String):void
+            {
+                if (layer == vectorLayer) vectorStatus = text;
+                else if (layer == esriLayer) esriStatus = text;
+                else tiledStatus = text;
+            }
+
+            private function layerLoad(event:LayerEvent):void
+            {
+                var layer:HybridTileLayer = event.layer as HybridTileLayer;
+                setStatus(layer, "Loaded: " + layer.activeURL);
+            }
+
+            private function layerLoadError(event:LayerEvent):void
+            {
+                setStatus(event.layer as HybridTileLayer, "Not loaded: " + event.fault.faultString);
+            }
+
+            private function layerFault(event:FaultEvent):void
+            {
+                setStatus(event.target as HybridTileLayer, "Error: " + event.fault.faultString);
+            }
+
+            private function layerUpdateStart(event:LayerEvent):void
+            {
+                setStatus(event.layer as HybridTileLayer, "Drawing...");
+            }
+
+            private function layerUpdateEnd(event:LayerEvent):void
+            {
+                var layer:HybridTileLayer = event.layer as HybridTileLayer;
+                setStatus(layer, layer.updateTimings);
+            }
+
+            private function extentChange(event:ExtentEvent):void
+            {
+                mapStatus = "Level " + map.level + ", scale 1:" + Math.round(map.scale);
+            }
+
+            // ------------------------------------------------------------------
+            // commands
+            // ------------------------------------------------------------------
+
+            /** Shows the place at its level, in one step (the extent of that level around the place). */
+            private function goTo(place:Object):void
+            {
+                if (place == null || map.lods == null || map.lods.length == 0)
+                {
+                    return;
+                }
+                var lod:LOD = map.lods[Math.min(place.level, map.lods.length - 1)];
+                var halfWidth:Number = map.width / 2 * lod.resolution;
+                var halfHeight:Number = map.height / 2 * lod.resolution;
+                map.extent = new Extent(place.x - halfWidth, place.y - halfHeight, place.x + halfWidth, place.y + halfHeight,
+                    new SpatialReference(102100));
+            }
+
+            /** What the map shows when the form chosen is not in the basemap. */
+            private function missingText(scheme:int, vector:String, esri:String, tiled:String):String
+            {
+                var status:String = scheme == 0 ? vector : scheme == 1 ? esri : tiled;
+                return status != null && status.indexOf("Not loaded") == 0 ? status : null;
+            }
+
+            private function refreshAll():void
+            {
+                vectorLayer.refresh();
+                esriLayer.refresh();
+                tiledLayer.refresh();
+            }
+        ]]>
+    </fx:Script>
+
+    <s:layout>
+        <s:HorizontalLayout gap="0"/>
+    </s:layout>
+
+    <!-- controls -->
+    <s:Scroller width="300" height="100%" horizontalScrollPolicy="off">
+        <s:VGroup width="100%" paddingLeft="10" paddingRight="10" paddingTop="10" paddingBottom="10" gap="6">
+            <s:Label text="Basemap" fontWeight="bold"/>
+            <s:DropDownList id="basemapList" width="100%" dataProvider="{basemaps}" selectedIndex="0"
+                            change="basemapId = basemapList.selectedItem.id"/>
+
+            <s:Label text="Form shown (one layer per form)" fontWeight="bold" paddingTop="8"/>
+            <s:RadioButton groupName="schemes" label="Vector" selected="{scheme == 0}" click="scheme = 0"/>
+            <s:Label text="{vectorStatus}" width="100%" fontSize="10" color="0x666666" maxDisplayedLines="3"/>
+            <s:RadioButton groupName="schemes" label="Raster: MapServer (esri)" selected="{scheme == 1}" click="scheme = 1"/>
+            <s:Label text="{esriStatus}" width="100%" fontSize="10" color="0x666666" maxDisplayedLines="3"/>
+            <s:RadioButton groupName="schemes" label="Raster: URL template (tiled)" selected="{scheme == 2}" click="scheme = 2"/>
+            <s:Label text="{tiledStatus}" width="100%" fontSize="10" color="0x666666" maxDisplayedLines="3"/>
+
+            <s:Label text="Loading" fontWeight="bold" paddingTop="8"/>
+            <s:Label text="Proxy page (empty: none)"/>
+            <s:HGroup verticalAlign="middle" width="100%">
+                <s:TextInput id="proxyInput" width="100%" text="{proxy}" enter="proxy = proxyInput.text"/>
+                <s:Button label="Apply" click="proxy = proxyInput.text" width="56"/>
+            </s:HGroup>
+            <s:HGroup verticalAlign="middle" width="100%">
+                <s:Label text="Transport" width="110"/>
+                <s:DropDownList id="transportList" width="100%" dataProvider="{transports}"
+                                selectedIndex="{transports.getItemIndex(transport)}"
+                                change="transport = String(transportList.selectedItem)"/>
+            </s:HGroup>
+            <s:CheckBox id="proxyTilesBox" label="Tiles through the proxy" selected="true"
+                        enabled="{proxy ? true : false}"/>
+            <s:HGroup verticalAlign="middle" width="100%">
+                <s:Label text="Tile cache (MB)" width="110"/>
+                <s:NumericStepper id="cacheStepper" minimum="0" maximum="256" stepSize="16" value="64" width="70"/>
+            </s:HGroup>
+            <s:Button label="Refresh (empties the cache)" click="refreshAll()" width="100%"/>
+
+            <s:Label text="Drawing" fontWeight="bold" paddingTop="8"/>
+            <s:HGroup verticalAlign="middle" width="100%">
+                <s:Label text="Fade in (frames)" width="110"/>
+                <s:HSlider id="fadeSlider" minimum="1" maximum="12" value="4" width="100%"/>
+            </s:HGroup>
+            <s:CheckBox id="smoothingBox" label="Smoothing when scaled" selected="true"/>
+            <s:CheckBox id="resamplingBox" label="Resampling of missing raster tiles" selected="true"/>
+            <s:CheckBox id="labelsBox" label="Labels (vector)" selected="true"/>
+            <s:HGroup verticalAlign="middle" width="100%">
+                <s:Label text="Min. halo (px)" width="110"/>
+                <s:HSlider id="haloSlider" minimum="0" maximum="3" stepSize="0.5" value="1.5" width="100%"/>
+            </s:HGroup>
+
+            <s:Label text="Map" fontWeight="bold" paddingTop="8"/>
+            <s:CheckBox id="lodsBox" label="Levels of the basemap (updateMapLods)" selected="true"/>
+            <s:CheckBox id="wrapBox" label="Repeat the world (wrapAround180)" selected="true"/>
+            <s:CheckBox id="diagnosticsBox" label="Diagnostics" selected="false"/>
+            <s:Label text="{mapStatus}" width="100%" fontSize="10" color="0x666666"/>
+
+            <s:Label text="Go to" fontWeight="bold" paddingTop="8"/>
+            <s:List id="placeList" width="100%" dataProvider="{places}" requireSelection="false"
+                    change="goTo(placeList.selectedItem)" borderVisible="false">
+                <s:layout>
+                    <s:VerticalLayout gap="0" requestedRowCount="5"/>
+                </s:layout>
+            </s:List>
+        </s:VGroup>
+    </s:Scroller>
+
+    <!-- the map, in a frame -->
+    <s:BorderContainer width="100%" height="100%" borderColor="0x9A9A9A" borderWeight="1" cornerRadius="4"
+                       backgroundColor="0xF4F4F4">
+        <s:layout>
+            <s:BasicLayout/>
+        </s:layout>
+        <esri:Map id="map" left="8" right="8" top="8" bottom="8" logoVisible="false"
+                  wrapAround180="{wrapBox.selected}" extentChange="extentChange(event)">
+            <esri:extent>
+                <esri:Extent xmin="1371000" ymin="5134000" xmax="1409000" ymax="5154000">
+                    <esri:SpatialReference wkid="102100"/>
+                </esri:Extent>
+            </esri:extent>
+
+            <!-- the same basemap in its three forms: only one visible at a time -->
+            <falpi:HybridTileLayer id="vectorLayer" layerType="vector"
+                                   layerMap="{layerMap}" layerSelector="{basemapId}" visible="{scheme == 0}"
+                                   proxyURL="{proxy}" transport="{transport}"
+                                   proxyTiles="{proxyTilesBox.selected}" tileCacheSize="{cacheStepper.value}"
+                                   fadeInFrameCount="{fadeSlider.value}" smoothing="{smoothingBox.selected}"
+                                   updateMapLods="{lodsBox.selected}" diagnostics="{diagnosticsBox.selected}"
+                                   labelsVisible="{labelsBox.selected}" minimumHaloWidth="{haloSlider.value}"
+                                   load="layerLoad(event)" loadError="layerLoadError(event)" fault="layerFault(event)"
+                                   updateStart="layerUpdateStart(event)" updateEnd="layerUpdateEnd(event)"/>
+            <falpi:HybridTileLayer id="esriLayer" layerType="raster" layerFormat="esri"
+                                   layerMap="{layerMap}" layerSelector="{basemapId}" visible="{scheme == 1}"
+                                   proxyURL="{proxy}" transport="{transport}"
+                                   proxyTiles="{proxyTilesBox.selected}" tileCacheSize="{cacheStepper.value}"
+                                   fadeInFrameCount="{fadeSlider.value}" smoothing="{smoothingBox.selected}"
+                                   updateMapLods="{lodsBox.selected}" diagnostics="{diagnosticsBox.selected}"
+                                   resampling="{resamplingBox.selected}"
+                                   load="layerLoad(event)" loadError="layerLoadError(event)" fault="layerFault(event)"
+                                   updateStart="layerUpdateStart(event)" updateEnd="layerUpdateEnd(event)"/>
+            <falpi:HybridTileLayer id="tiledLayer" layerType="raster" layerFormat="tiled"
+                                   layerMap="{layerMap}" layerSelector="{basemapId}" visible="{scheme == 2}"
+                                   proxyURL="{proxy}" transport="{transport}"
+                                   proxyTiles="{proxyTilesBox.selected}" tileCacheSize="{cacheStepper.value}"
+                                   fadeInFrameCount="{fadeSlider.value}" smoothing="{smoothingBox.selected}"
+                                   updateMapLods="{lodsBox.selected}" diagnostics="{diagnosticsBox.selected}"
+                                   resampling="{resamplingBox.selected}"
+                                   load="layerLoad(event)" loadError="layerLoadError(event)" fault="layerFault(event)"
+                                   updateStart="layerUpdateStart(event)" updateEnd="layerUpdateEnd(event)"/>
+        </esri:Map>
+
+        <!-- the form chosen is not in this basemap: the layer says why -->
+        <s:Label text="{missingText(scheme, vectorStatus, esriStatus, tiledStatus)}"
+                 visible="{missingText(scheme, vectorStatus, esriStatus, tiledStatus) != null}"
+                 horizontalCenter="0" verticalCenter="0" maxWidth="420" textAlign="center"
+                 fontSize="14" color="0x444444" backgroundColor="0xFFFFFF" backgroundAlpha="0.85"
+                 paddingLeft="12" paddingRight="12" paddingTop="8" paddingBottom="8"/>
+    </s:BorderContainer>
+</s:Application>

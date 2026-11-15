@@ -1,12 +1,11 @@
 package org.falpi.ags.layers.vectorTiles.source
 {
-    import org.falpi.ags.layers.vectorTiles.util.UrlUtil;
+    import org.falpi.ags.utils.UrlUtil;
+    import org.falpi.ags.utils.WebMercator;
 
     /** A vector tile source of the style, with its tile grid. */
     public final class TileSource
     {
-        public static const WEB_MERCATOR_ORIGIN:Number = 20037508.342787;
-
         public var name:String;
         /** Absolute tile URL templates ({z}, {x}, {y}). */
         public var tiles:Array = [];
@@ -20,10 +19,10 @@ package org.falpi.ags.layers.vectorTiles.source
         public var indexed:Boolean = false;
 
         /** Tile grid origin (top-left corner) in map units. */
-        public var originX:Number = -WEB_MERCATOR_ORIGIN;
-        public var originY:Number = WEB_MERCATOR_ORIGIN;
+        public var originX:Number = -WebMercator.HALF_WORLD;
+        public var originY:Number = WebMercator.HALF_WORLD;
         /** Size in map units of the single tile of zoom 0. */
-        public var span0:Number = WEB_MERCATOR_ORIGIN * 2;
+        public var span0:Number = WebMercator.WORLD;
 
         private var m_next:int = 0;
 

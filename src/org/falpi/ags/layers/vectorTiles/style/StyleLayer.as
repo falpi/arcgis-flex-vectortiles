@@ -127,9 +127,13 @@ package org.falpi.ags.layers.vectorTiles.style
             return property(name).evaluate(zoom, feature);
         }
 
+        /**
+         * As MapLibre: a minzoom of 0 (or none) hides nothing, also below zoom 0 (the level 0 of the "arcgis"
+         * tiling scheme is the vector zoom -1).
+         */
         public function isVisibleAt(zoom:Number):Boolean
         {
-            return visible && zoom >= minzoom && zoom < maxzoom;
+            return visible && (minzoom <= 0 || zoom >= minzoom) && zoom < maxzoom;
         }
     }
 }

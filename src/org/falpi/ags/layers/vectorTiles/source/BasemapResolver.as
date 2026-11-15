@@ -1,9 +1,9 @@
 package org.falpi.ags.layers.vectorTiles.source
 {
-    import org.falpi.ags.layers.vectorTiles.net.ResourceLoader;
-    import org.falpi.ags.layers.vectorTiles.net.ResourceRequest;
+    import org.falpi.ags.net.ResourceLoader;
+    import org.falpi.ags.net.ResourceRequest;
     import org.falpi.ags.layers.vectorTiles.style.Style;
-    import org.falpi.ags.layers.vectorTiles.util.UrlUtil;
+    import org.falpi.ags.utils.UrlUtil;
 
     /**
      * Turns a URL into a BasemapDefinition. The kind of resource is detected

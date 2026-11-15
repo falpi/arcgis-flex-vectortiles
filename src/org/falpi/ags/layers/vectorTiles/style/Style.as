@@ -1,6 +1,6 @@
 package org.falpi.ags.layers.vectorTiles.style
 {
-    import org.falpi.ags.layers.vectorTiles.util.UrlUtil;
+    import org.falpi.ags.utils.UrlUtil;
 
     /** A parsed Mapbox GL style document (version 8). */
     public final class Style

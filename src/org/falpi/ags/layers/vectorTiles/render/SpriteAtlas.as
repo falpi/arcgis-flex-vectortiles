@@ -1,7 +1,7 @@
 package org.falpi.ags.layers.vectorTiles.render
 {
-    import org.falpi.ags.layers.vectorTiles.net.ResourceLoader;
-    import org.falpi.ags.layers.vectorTiles.net.ResourceRequest;
+    import org.falpi.ags.net.ResourceLoader;
+    import org.falpi.ags.net.ResourceRequest;
 
     import flash.display.Bitmap;
     import flash.display.BitmapData;

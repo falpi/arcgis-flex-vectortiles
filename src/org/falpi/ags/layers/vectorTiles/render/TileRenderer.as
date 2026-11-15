@@ -74,7 +74,7 @@ package org.falpi.ags.layers.vectorTiles.render
             for (var i:int = 0; i < n; i++)
             {
                 var layer:StyleLayer = layers[i];
-                if (!layer.visible || zoom < layer.minzoom || zoom >= layer.maxzoom)
+                if (!layer.isVisibleAt(zoom))
                 {
                     continue;
                 }

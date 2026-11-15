@@ -2,4 +2,6 @@
 <!-- MXML namespace http://falpi.org/ags: xmlns:falpi="http://falpi.org/ags" -->
 <componentPackage>
     <component id="VectorTileLayer" class="org.falpi.ags.layers.VectorTileLayer"/>
+    <component id="RasterTileLayer" class="org.falpi.ags.layers.RasterTileLayer"/>
+    <component id="HybridTileLayer" class="org.falpi.ags.layers.HybridTileLayer"/>
 </componentPackage>
