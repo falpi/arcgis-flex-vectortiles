@@ -33,6 +33,52 @@ package org.falpi.ags.layers
             setContent(m_raster);
         }
 
+        // ------------------------------------------------------------------
+        // creation by code
+        // ------------------------------------------------------------------
+
+        /**
+         * A layer of an ArcGIS MapServer (format "esri").
+         * @param proxyURL proxy page; null: the defaults
+         * @param proxyTiles true or false; null: the defaults
+         */
+        public static function fromMapServer(url:String, proxyURL:String = null, proxyTiles:Object = null):RasterTileLayer
+        {
+            var layer:RasterTileLayer = new RasterTileLayer(url, proxyURL);
+            layer.format = FORMAT_ESRI;
+            applyProxyTiles(layer, proxyTiles);
+            return layer;
+        }
+
+        /**
+         * A layer of a URL template with {level}, {row}, {col} and {subDomain} (format "tiled", as WebTiledLayer).
+         * @param subDomains the values of {subDomain}, one per row in turn
+         * @param proxyURL proxy page; null: the defaults
+         * @param proxyTiles true or false; null: the defaults
+         */
+        public static function fromTemplate(template:String, subDomains:Array = null, proxyURL:String = null,
+            proxyTiles:Object = null):RasterTileLayer
+        {
+            var layer:RasterTileLayer = new RasterTileLayer(template, proxyURL);
+            layer.format = FORMAT_TILED;
+            layer.subDomains = subDomains;
+            applyProxyTiles(layer, proxyTiles);
+            return layer;
+        }
+
+        /** proxyTiles of a factory: a Boolean is set on the layer, null leaves it to the defaults. */
+        tile_internal static function applyProxyTiles(layer:AbstractTileLayer, proxyTiles:Object):void
+        {
+            if (proxyTiles is Boolean)
+            {
+                layer.proxyTiles = Boolean(proxyTiles);
+            }
+            else if (proxyTiles != null)
+            {
+                throw new ArgumentError("proxyTiles must be true, false or null: " + proxyTiles);
+            }
+        }
+
         [Inspectable(enumeration="esri,tiled", defaultValue="esri")]
         /** "esri" (ArcGIS MapServer, default) or "tiled" (URL template). */
         public function get format():String

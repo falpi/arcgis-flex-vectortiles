@@ -2,6 +2,7 @@ package org.falpi.ags.layers
 {
     import org.falpi.ags.layers.supportClasses.VectorContent;
     import org.falpi.ags.layers.supportClasses.VectorTileLayerDefaults;
+    import org.falpi.ags.layers.vectorTiles.source.BasemapDefinition;
     import org.falpi.ags.layers.vectorTiles.style.Style;
 
     /**
@@ -130,6 +131,39 @@ package org.falpi.ags.layers
         public function set minimumHaloAlpha(value:Number):void
         {
             m_vector.minimumHaloAlpha = value;
+        }
+
+        /** detectedFormat: the url is ArcGIS (an item of a portal or a VectorTileServer). */
+        public static const FORMAT_ARCGIS:String = BasemapDefinition.FORMAT_ARCGIS;
+        /** detectedFormat: the url is a MapLibre / Mapbox GL style document (style specification v8). */
+        public static const FORMAT_MAPLIBRE:String = BasemapDefinition.FORMAT_MAPLIBRE;
+        /** styleOrigin: the style of the ArcGIS item (resources/styles/root.json). */
+        public static const STYLE_ORIGIN_ITEM:String = BasemapDefinition.STYLE_ORIGIN_ITEM;
+        /** styleOrigin: the default style of the VectorTileServer. */
+        public static const STYLE_ORIGIN_SERVICE:String = BasemapDefinition.STYLE_ORIGIN_SERVICE;
+        /** styleOrigin: the style document at the url. */
+        public static const STYLE_ORIGIN_DOCUMENT:String = BasemapDefinition.STYLE_ORIGIN_DOCUMENT;
+        /** styleOrigin: the style property, given by the application instead of downloaded. */
+        public static const STYLE_ORIGIN_INLINE:String = BasemapDefinition.STYLE_ORIGIN_INLINE;
+
+        /**
+         * What the url was recognized as, read-only: "arcgis" (an item of a portal or a VectorTileServer) or
+         * "maplibre" (a MapLibre / Mapbox GL style document); null without url, or until the layer is loaded.
+         */
+        public function get detectedFormat():String
+        {
+            return m_vector.detectedFormat;
+        }
+
+        /**
+         * Where the style in use comes from, read-only (null until the layer is loaded): "item" (the style of the
+         * ArcGIS item), "service" (the default style of the VectorTileServer), "document" (the style document at the
+         * url) or "inline" (the style property, given by the application instead of downloaded, which replaces the style at the url: the url, if any, still gives
+         * the service, its grid and extent, and the base of the relative URLs).
+         */
+        public function get styleOrigin():String
+        {
+            return m_vector.styleOrigin;
         }
 
         /** The parsed style in use (null until the layer is loaded). */

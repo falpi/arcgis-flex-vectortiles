@@ -91,6 +91,45 @@ package org.falpi.ags.layers
         }
 
         // ------------------------------------------------------------------
+        // creation by code
+        // ------------------------------------------------------------------
+
+        /**
+         * A layer of a basemap of the map of basemaps (layerMap, otherwise defaultLayerMap).
+         * @param layerType "vector" or "raster"; null: defaultLayerType, otherwise the first layer of the basemap
+         * @param layerFormat "esri" or "tiled" for a raster layer; null: defaultLayerFormat, otherwise the first one
+         * @param proxyURL proxy page; null: the defaults
+         * @param proxyTiles true or false; null: the defaults
+         */
+        public static function fromSelector(selector:String, layerType:String = null, layerFormat:String = null,
+            proxyURL:String = null, proxyTiles:Object = null):HybridTileLayer
+        {
+            var layer:HybridTileLayer = new HybridTileLayer(null, proxyURL);
+            layer.layerSelector = selector;
+            layer.layerType = layerType;
+            layer.layerFormat = layerFormat;
+            RasterTileLayer.applyProxyTiles(layer, proxyTiles);
+            return layer;
+        }
+
+        /**
+         * A layer of a URL given directly, of the type and format given.
+         * @param layerType "vector" or "raster"; null: defaultLayerType, otherwise "vector"
+         * @param layerFormat "esri" or "tiled" for a raster layer; null: defaultLayerFormat, otherwise "esri"
+         * @param proxyURL proxy page; null: the defaults
+         * @param proxyTiles true or false; null: the defaults
+         */
+        public static function fromParams(url:String, layerType:String = null, layerFormat:String = null,
+            proxyURL:String = null, proxyTiles:Object = null):HybridTileLayer
+        {
+            var layer:HybridTileLayer = new HybridTileLayer(url, proxyURL);
+            layer.layerType = layerType;
+            layer.layerFormat = layerFormat;
+            RasterTileLayer.applyProxyTiles(layer, proxyTiles);
+            return layer;
+        }
+
+        // ------------------------------------------------------------------
         // selection
         // ------------------------------------------------------------------
 
@@ -358,6 +397,18 @@ package org.falpi.ags.layers
         public function set minimumHaloAlpha(value:Number):void
         {
             m_vector.minimumHaloAlpha = value;
+        }
+
+        /** What the url of a vector basemap was recognized as (see VectorTileLayer); null for a raster one. */
+        public function get detectedFormat():String
+        {
+            return content == m_vector ? m_vector.detectedFormat : null;
+        }
+
+        /** Where the style of a vector basemap comes from (see VectorTileLayer); null for a raster one. */
+        public function get styleOrigin():String
+        {
+            return content == m_vector ? m_vector.styleOrigin : null;
         }
 
         /** The parsed style of a vector basemap (null otherwise). */

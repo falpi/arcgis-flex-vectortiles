@@ -74,6 +74,16 @@ A complete example: [examples/src/HybridTileDemo.mxml](examples/src/HybridTileDe
 where `OSM` is a constant `"https://{subDomain}.tile.openstreetmap.org/{level}/{col}/{row}.png"`. In MXML the
 braces of a template are read as a binding: pass it through a constant, as above, or write `\{level\}`.
 
+From ActionScript, the constructor takes `(url, proxyURL, token)` as the Esri layers; two factories say which
+format is meant:
+
+```actionscript
+RasterTileLayer.fromMapServer(url, proxyURL = null, proxyTiles = null)
+RasterTileLayer.fromTemplate(template, subDomains = null, proxyURL = null, proxyTiles = null)
+```
+
+`null` for `proxyURL` or `proxyTiles` leaves them to the [defaults](#defaults).
+
 ### HybridTileLayer
 
 A large Flex application rarely has a single map: every view declares its basemaps, with the class and the URL
@@ -113,6 +123,16 @@ With no type requested, a layer takes the first layer of its basemap: moving the
 basemaps is moving the `vector` lines to the top of the file. A view can still ask for a type or a format, or
 give a `url` directly. There is no silent fallback: a combination that is not in the map is a load error that
 says what is missing.
+
+From ActionScript, two factories create the layer from a basemap of the map or from a URL:
+
+```actionscript
+HybridTileLayer.fromSelector(selector, layerType = null, layerFormat = null, proxyURL = null, proxyTiles = null)
+HybridTileLayer.fromParams(url, layerType = null, layerFormat = null, proxyURL = null, proxyTiles = null)
+```
+
+`null` leaves a setting to the defaults: for `layerType` and `layerFormat` `defaultLayerType` and
+`defaultLayerFormat`, then the first layer of the basemap (`fromSelector`) or `vector` and `esri` (`fromParams`).
 
 ## The map of basemaps
 
@@ -324,6 +344,8 @@ basemap, unless the application sets one), `visible`, `alpha`…
 | `minimumHaloColor` | Color of that halo as `0xRRGGBB`. Not set (the default): white behind dark text, black behind light text. |
 | `minimumHaloAlpha` | Opacity of that halo, 0 to 1 (default 0.8). |
 | `styleDefinition` | The parsed style, read-only. |
+| `detectedFormat` | What the `url` was recognized as, read-only: `arcgis` (an item of an ArcGIS portal or a VectorTileServer) or `maplibre` (a MapLibre / Mapbox GL style document, style specification v8); `null` without `url`. |
+| `styleOrigin` | Where the style in use comes from, read-only: `item` (the style of the ArcGIS item), `service` (the default style of the VectorTileServer), `document` (the style document at the `url`) or `inline` (the `style` property, given by the application instead of downloaded, which replaces the style at the `url`: the `url`, if any, still gives the service, its grid and extent, and the base of the relative URLs). |
 
 ### RasterTileLayer
 
@@ -463,6 +485,12 @@ could differ by one pixel).
 
 ## Changes in 2.1.0
 
+- **Factories**: `RasterTileLayer.fromMapServer` and `fromTemplate`, `HybridTileLayer.fromSelector` and
+  `fromParams`, to create a layer by code with the settings that the constructor of the Esri layers does not
+  have (format, sub-domains, selector, type), and `proxyURL` and `proxyTiles` at the end.
+- **`detectedFormat` and `styleOrigin`** on the vector layers tell what their `url` was recognized as (`arcgis`
+  or `maplibre`) and where the style in use comes from (`item`, `service`, `document` or `inline`); both `null`
+  until loaded, and for a `HybridTileLayer` that shows a raster basemap.
 - **Defaults for every tile layer, and per kind of basemap** ([Defaults](#defaults)):
   `AbstractTileLayer.defaults`, `RasterTileLayer.defaults` and `VectorTileLayer.defaults` replace the static
   defaults of `HybridTileLayer`. They apply to `RasterTileLayer` and `VectorTileLayer` too, and the raster and

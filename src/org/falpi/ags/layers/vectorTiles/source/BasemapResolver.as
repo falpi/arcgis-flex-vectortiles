@@ -49,6 +49,7 @@ package org.falpi.ags.layers.vectorTiles.source
             url = UrlUtil.normalizeMapbox(url);
             if (styleOverride != null && (url == null || url.length == 0))
             {
+                m_definition.styleOrigin = BasemapDefinition.STYLE_ORIGIN_INLINE;
                 useStyle(styleOverride, null);
                 return;
             }
@@ -60,6 +61,7 @@ package org.falpi.ags.layers.vectorTiles.source
             }
             if (/\/content\/items\/[0-9a-fA-F]+\/?$/.test(path))
             {
+                m_definition.detectedFormat = BasemapDefinition.FORMAT_ARCGIS;
                 url = trimSlash(path) + "/resources/styles/root.json" + query(url);
             }
             else if (/\/VectorTileServer\/?$/i.test(path) && url.indexOf("f=json") < 0)
@@ -80,6 +82,14 @@ package org.falpi.ags.layers.vectorTiles.source
                 }
                 if (json.layers is Array)
                 {
+                    // a style document: the one of an ArcGIS item, or the url itself
+                    var item:Boolean = m_definition.detectedFormat == BasemapDefinition.FORMAT_ARCGIS;
+                    if (!item)
+                    {
+                        m_definition.detectedFormat = BasemapDefinition.FORMAT_MAPLIBRE;
+                    }
+                    m_definition.styleOrigin = styleOverride != null ? BasemapDefinition.STYLE_ORIGIN_INLINE :
+                        (item ? BasemapDefinition.STYLE_ORIGIN_ITEM : BasemapDefinition.STYLE_ORIGIN_DOCUMENT);
                     useStyle(styleOverride != null ? styleOverride : json, entryURL);
                 }
                 else if (json.tileInfo != null && json.tileInfo.format is String && String(json.tileInfo.format).toLowerCase() != "pbf")
@@ -89,6 +99,9 @@ package org.falpi.ags.layers.vectorTiles.source
                 else if (json.hasOwnProperty("tileInfo") || json.hasOwnProperty("defaultStyles"))
                 {
                     var serviceURL:String = trimSlash(UrlUtil.stripQuery(entryURL));
+                    m_definition.detectedFormat = BasemapDefinition.FORMAT_ARCGIS;
+                    m_definition.styleOrigin = styleOverride != null ? BasemapDefinition.STYLE_ORIGIN_INLINE :
+                        BasemapDefinition.STYLE_ORIGIN_SERVICE;
                     m_services[serviceURL] = json;
                     m_definition.esriService = json;
                     if (styleOverride != null)
@@ -117,7 +130,8 @@ package org.falpi.ags.layers.vectorTiles.source
                 }
                 else
                 {
-                    fail("Unrecognized resource (neither a style nor a VectorTileServer) [" + entryURL + "]");
+                    fail("Unrecognized resource (neither an ArcGIS item, a VectorTileServer nor a Mapbox GL style) [" +
+                        entryURL + "]");
                 }
             }, fail, true);
         }

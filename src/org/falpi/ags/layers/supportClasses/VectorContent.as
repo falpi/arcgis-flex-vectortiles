@@ -296,6 +296,18 @@ package org.falpi.ags.layers.supportClasses
             }
         }
 
+        /** What the url was recognized as: "arcgis", "maplibre", or null (no url, or not loaded yet). */
+        public function get detectedFormat():String
+        {
+            return m_definition != null ? m_definition.detectedFormat : null;
+        }
+
+        /** Where the style in use comes from: "item", "service", "document" or "inline" (null until loaded). */
+        public function get styleOrigin():String
+        {
+            return m_definition != null ? m_definition.styleOrigin : null;
+        }
+
         /** The parsed style in use (null until the basemap is loaded). */
         public function get styleDefinition():Style
         {
