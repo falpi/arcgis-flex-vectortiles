@@ -74,7 +74,7 @@
             /** The proxy page of the development server of the repository (tests/server.cmd). */
             private static const DEV_PROXY:String = "http://localhost:8790/proxy";
 
-            /** The proxy page in use: null or empty for none. */
+            /** The proxy page in use: empty for none. */
             [Bindable] private var proxy:String;
             [Bindable] private var transport:String;
             [Bindable] private var transports:ArrayList = new ArrayList(["flash", "javascript"]);
@@ -128,10 +128,17 @@
                 else tiledStatus = text;
             }
 
+            /** For a vector basemap: what its url was recognized as and where its style comes from. */
+            private function kindOf(layer:HybridTileLayer):String
+            {
+                return layer.activeLayerType == HybridTileLayer.TYPE_VECTOR ?
+                    " (" + layer.detectedFormat + " / " + layer.styleOrigin + ")" : "";
+            }
+
             private function layerLoad(event:LayerEvent):void
             {
                 var layer:HybridTileLayer = event.layer as HybridTileLayer;
-                setStatus(layer, "Loaded: " + layer.activeURL);
+                setStatus(layer, "Loaded" + kindOf(layer) + ": " + layer.activeURL);
             }
 
             private function layerLoadError(event:LayerEvent):void
@@ -152,7 +159,7 @@
             private function layerUpdateEnd(event:LayerEvent):void
             {
                 var layer:HybridTileLayer = event.layer as HybridTileLayer;
-                setStatus(layer, layer.updateTimings);
+                setStatus(layer, (kindOf(layer).length > 0 ? kindOf(layer).substr(1) + " " : "") + layer.updateTimings);
             }
 
             private function extentChange(event:ExtentEvent):void
